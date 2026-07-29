@@ -1,0 +1,1 @@
+(function(){'use strict';function s(){document.querySelectorAll('.rn-wa-button').forEach(function(b){var d=Math.max(0,parseInt(b.getAttribute('data-rn-delay')||'0',10));window.setTimeout(function(){b.classList.add('rn-wa-visible')},d*1000)})}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',s);else s()})();
