@@ -1,14 +1,14 @@
 === ReplyNext AI Chat & WhatsApp ===
 Contributors: replynextai
-Tags: whatsapp, live chat, ai chatbot, customer support, sales
+Tags: whatsapp, messenger, live chat, ai chatbot, customer support, sales
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 1.1.1
+Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Add ReplyNext AI Website Chat and a free WhatsApp click-to-chat button to WordPress.
+Add ReplyNext AI Website Chat and configurable WhatsApp, Messenger, and direct-call contact buttons to WordPress.
 
 == Description ==
 
@@ -29,7 +29,7 @@ their client portal by entering the ReplyNext server URL and Company ID.
 Features:
 
 * Guided ReplyNext dashboard
-* Free WhatsApp click-to-chat
+* WhatsApp, Messenger, and direct-call contact buttons
 * AI Website Chat connection
 * Live visual previews
 * Site-wide display or shortcodes
@@ -37,6 +37,21 @@ Features:
 * Mobile and desktop visibility
 * Custom WhatsApp label, message, color, position, and delay
 * Optional logged-in WordPress user identity sharing
+* WooCommerce catalog synchronization in 100-product batches
+
+== External services ==
+
+This plugin connects to the ReplyNext AI service at https://replynextai.com when
+AI Website Chat, connection status, or WooCommerce catalog synchronization is
+enabled. Product names, prices, descriptions, categories, URLs, and image URLs
+may be transmitted for catalog synchronization. If the optional logged-in user
+identity setting is enabled, the logged-in WordPress user's name and email may
+be sent to ReplyNext AI with chat requests. Review the [ReplyNext AI privacy
+policy](https://replynextai.com/privacy-policy) before enabling these features.
+
+The contact buttons open the configured WhatsApp, Messenger, or telephone URL
+in the visitor's browser or device. Those services may process data under their
+own privacy policies; this plugin does not request their APIs or permissions.
 
 == Installation ==
 
@@ -83,6 +98,11 @@ mobile/desktop visibility.
 
 = 1.1.1 =
 * Keeps third-party WordPress admin notices above the branded ReplyNext dashboard header.
+
+= 1.2.0 =
+* Added Messenger and direct-call contact buttons.
+* Added full WooCommerce catalog synchronization in 100-product batches.
+* Added external-service and privacy disclosures.
 
 = 1.1.0 =
 

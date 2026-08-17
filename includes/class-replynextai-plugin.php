@@ -85,6 +85,7 @@ final class ReplyNextAI_Plugin {
 
     public function sanitize_options($input) {
         $current = $this->options();
+        if (!is_array($input)) return $current;
         $output = self::defaults();
         $url = isset($input['server_url']) ? untrailingslashit(esc_url_raw(trim($input['server_url']))) : '';
         $output['server_url'] = $url && wp_http_validate_url($url) ? $url : $current['server_url'];
