@@ -44,6 +44,12 @@ final class ReplyNextAI_Plugin {
             'whatsapp_color'      => '#25D366',
             'whatsapp_position'   => 'left',
             'whatsapp_delay'      => '0',
+            'messenger_enabled'   => '0',
+            'messenger_url'       => '',
+            'messenger_label'     => 'Message on Messenger',
+            'call_enabled'        => '0',
+            'call_number'         => '',
+            'call_label'          => 'Call us',
             'show_on'             => 'all',
             'include_pages'       => '',
             'exclude_pages'       => '',
@@ -84,7 +90,7 @@ final class ReplyNextAI_Plugin {
         $output['server_url'] = $url && wp_http_validate_url($url) ? $url : $current['server_url'];
         $output['company_id'] = isset($input['company_id']) ? preg_replace('/[^0-9]/', '', (string) $input['company_id']) : '';
         $output['api_token'] = isset($input['api_token']) ? sanitize_text_field($input['api_token']) : $current['api_token'];
-        foreach (array('ai_enabled', 'ai_sitewide', 'share_user_data', 'whatsapp_enabled', 'hide_mobile', 'hide_desktop') as $checkbox) {
+        foreach (array('ai_enabled', 'ai_sitewide', 'share_user_data', 'whatsapp_enabled', 'messenger_enabled', 'call_enabled', 'hide_mobile', 'hide_desktop') as $checkbox) {
             $output[$checkbox] = empty($input[$checkbox]) ? '0' : '1';
         }
         $output['whatsapp_number'] = isset($input['whatsapp_number']) ? preg_replace('/[^0-9]/', '', (string) $input['whatsapp_number']) : '';
@@ -94,6 +100,10 @@ final class ReplyNextAI_Plugin {
         $output['whatsapp_color'] = $color ?: self::defaults()['whatsapp_color'];
         $output['whatsapp_position'] = isset($input['whatsapp_position']) && in_array($input['whatsapp_position'], array('left', 'right'), true) ? $input['whatsapp_position'] : 'left';
         $output['whatsapp_delay'] = isset($input['whatsapp_delay']) ? (string) min(30, max(0, absint($input['whatsapp_delay']))) : '0';
+        $output['messenger_url'] = isset($input['messenger_url']) ? esc_url_raw(trim($input['messenger_url'])) : '';
+        $output['messenger_label'] = isset($input['messenger_label']) ? sanitize_text_field($input['messenger_label']) : self::defaults()['messenger_label'];
+        $output['call_number'] = isset($input['call_number']) ? preg_replace('/[^0-9+]/', '', (string) $input['call_number']) : '';
+        $output['call_label'] = isset($input['call_label']) ? sanitize_text_field($input['call_label']) : self::defaults()['call_label'];
         $output['show_on'] = isset($input['show_on']) && in_array($input['show_on'], array('all', 'include'), true) ? $input['show_on'] : 'all';
         $output['include_pages'] = isset($input['include_pages']) ? $this->sanitize_id_list($input['include_pages']) : '';
         $output['exclude_pages'] = isset($input['exclude_pages']) ? $this->sanitize_id_list($input['exclude_pages']) : '';
@@ -102,7 +112,8 @@ final class ReplyNextAI_Plugin {
     }
 
     private function sanitize_id_list($value) {
-        $ids = array_filter(array_map('absint', preg_split('/[\s,]+/', (string) $value)));
+        $values = is_array($value) ? $value : preg_split('/[\s,]+/', (string) $value);
+        $ids = array_filter(array_map('absint', $values));
         return implode(',', array_unique($ids));
     }
 
@@ -180,22 +191,30 @@ final class ReplyNextAI_Plugin {
         <label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable AI Website Chat', 'replynextai-chat'); ?></strong><small><?php esc_html_e('Also enable it in the ReplyNext portal.', 'replynextai-chat'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_enabled]" value="1" <?php checked($o['ai_enabled'], '1'); ?> /></label>
         <?php $this->field('server_url', __('ReplyNext server URL', 'replynextai-chat'), $o['server_url'], 'https://replynextai.com', 'url'); ?><?php $this->field('company_id', __('Company ID', 'replynextai-chat'), $o['company_id'], '12'); ?>
         <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_sitewide]" value="1" <?php checked($o['ai_sitewide'], '1'); ?> /> <?php esc_html_e('Show AI chat on every allowed page', 'replynextai-chat'); ?></label><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[share_user_data]" value="1" <?php checked($o['share_user_data'], '1'); ?> /> <?php esc_html_e('Pass logged-in WordPress user name and email', 'replynextai-chat'); ?></label><p class="description"><?php esc_html_e('Enable only when covered by your privacy notice.', 'replynextai-chat'); ?></p><?php submit_button(__('Save AI Chat Settings', 'replynextai-chat')); ?></div>
-        <div class="rn-card rn-preview-card"><span class="rn-step"><?php esc_html_e('LIVE PREVIEW', 'replynextai-chat'); ?></span><div class="rn-site-preview"><div class="rn-browser-bar"><i></i><i></i><i></i></div><div class="rn-preview-content"><h3><?php esc_html_e('Your website', 'replynextai-chat'); ?></h3><p><?php esc_html_e('The AI launcher floats above your theme.', 'replynextai-chat'); ?></p><span class="rn-ai-preview">AI</span></div></div><p><code>[replynextai_chat]</code></p><a href="<?php echo esc_url($o['server_url'] . '/chat-iframe?id=' . rawurlencode($o['company_id'])); ?>" target="_blank" rel="noopener noreferrer" class="button button-secondary"><?php esc_html_e('Open Chat Preview ↗', 'replynextai-chat'); ?></a></div></div></form></div><?php
+        <div class="rn-card rn-preview-card"><span class="rn-step"><?php esc_html_e('LIVE PREVIEW', 'replynextai-chat'); ?></span><p class="description"><?php esc_html_e('This is the customer-facing chat using your saved ReplyNext settings.', 'replynextai-chat'); ?></p><?php if ($o['company_id']) : ?><div class="rn-live-chat-preview" style="width:100%;max-width:620px;height:620px;overflow:hidden;border:1px solid #dfe3ea;border-radius:14px;background:#f4f6fa"><iframe src="<?php echo esc_url($o['server_url'] . '/chat-iframe?id=' . rawurlencode($o['company_id'])); ?>" title="<?php esc_attr_e('ReplyNext AI customer chat preview', 'replynextai-chat'); ?>" loading="lazy" style="display:block;width:100%;height:100%;border:0"></iframe></div><?php else : ?><div class="rn-site-preview"><div class="rn-browser-bar"><i></i><i></i><i></i></div><div class="rn-preview-content"><h3><?php esc_html_e('Connect your company to preview chat', 'replynextai-chat'); ?></h3><p><?php esc_html_e('Enter your Company ID and save settings to load the live chat preview.', 'replynextai-chat'); ?></p></div></div><?php endif; ?><p><code>[replynextai_chat]</code></p><a href="<?php echo esc_url($o['server_url'] . '/chat-iframe?id=' . rawurlencode($o['company_id'])); ?>" target="_blank" rel="noopener noreferrer" class="button button-secondary"><?php esc_html_e('Open Chat Preview ↗', 'replynextai-chat'); ?></a></div></div></form></div><?php
     }
 
     public function whatsapp_page() {
         $o = $this->options();
-        ?><div class="wrap rn-wrap"><?php $this->page_header(__('Free WhatsApp', 'replynextai-chat'), __('Use your own WhatsApp number—no API and no paid plan required.', 'replynextai-chat')); ?><?php $this->form_open(); $this->preserve_fields(array('whatsapp_enabled', 'whatsapp_number', 'whatsapp_message', 'whatsapp_label', 'whatsapp_color', 'whatsapp_position', 'whatsapp_delay')); ?><div class="rn-grid rn-grid-form"><div class="rn-card">
+        $preview_whatsapp_url = $o['whatsapp_number'] ? 'https://wa.me/' . rawurlencode($o['whatsapp_number']) . '?text=' . rawurlencode($o['whatsapp_message']) : '#';
+        ?><div class="wrap rn-wrap"><?php $this->page_header(__('Contact Buttons', 'replynextai-chat'), __('Offer WhatsApp, Messenger, and direct call buttons without any API integration.', 'replynextai-chat')); ?><?php $this->form_open(); $this->preserve_fields(array('whatsapp_enabled', 'whatsapp_number', 'whatsapp_message', 'whatsapp_label', 'whatsapp_color', 'whatsapp_position', 'whatsapp_delay', 'messenger_enabled', 'messenger_url', 'messenger_label', 'call_enabled', 'call_number', 'call_label')); ?><div class="rn-grid rn-grid-form"><div class="rn-card">
         <label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable Free WhatsApp Button', 'replynextai-chat'); ?></strong><small><?php esc_html_e('Opens wa.me in the visitor’s WhatsApp app.', 'replynextai-chat'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_enabled]" value="1" <?php checked($o['whatsapp_enabled'], '1'); ?> /></label>
         <?php $this->field('whatsapp_number', __('WhatsApp number', 'replynextai-chat'), $o['whatsapp_number'], '8801XXXXXXXXX', 'tel'); ?><p class="description"><?php esc_html_e('Include country code without +, spaces, or dashes.', 'replynextai-chat'); ?></p><?php $this->field('whatsapp_label', __('Button label', 'replynextai-chat'), $o['whatsapp_label'], __('Chat on WhatsApp', 'replynextai-chat')); ?>
         <label class="rn-field"><span><?php esc_html_e('Prefilled message', 'replynextai-chat'); ?></span><textarea rows="3" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_message]"><?php echo esc_textarea($o['whatsapp_message']); ?></textarea></label>
+        <hr /><label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable Messenger Button', 'replynextai-chat'); ?></strong><small><?php esc_html_e('Open your Facebook or Messenger link.', 'replynextai-chat'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[messenger_enabled]" value="1" <?php checked($o['messenger_enabled'], '1'); ?> /></label><?php $this->field('messenger_url', __('Messenger link', 'replynextai-chat'), $o['messenger_url'], 'https://m.me/your-page'); ?><?php $this->field('messenger_label', __('Messenger button label', 'replynextai-chat'), $o['messenger_label'], __('Message on Messenger', 'replynextai-chat')); ?>
+        <hr /><label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable Direct Call Button', 'replynextai-chat'); ?></strong><small><?php esc_html_e('Start a phone call from the visitor’s device.', 'replynextai-chat'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[call_enabled]" value="1" <?php checked($o['call_enabled'], '1'); ?> /></label><?php $this->field('call_number', __('Phone number', 'replynextai-chat'), $o['call_number'], '+8801XXXXXXXXX', 'tel'); ?><?php $this->field('call_label', __('Call button label', 'replynextai-chat'), $o['call_label'], __('Call us', 'replynextai-chat')); ?>
         <div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Color', 'replynextai-chat'); ?></span><input type="color" data-rn-preview-color name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_color]" value="<?php echo esc_attr($o['whatsapp_color']); ?>" /></label><label class="rn-field"><span><?php esc_html_e('Position', 'replynextai-chat'); ?></span><select name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_position]"><option value="left" <?php selected($o['whatsapp_position'], 'left'); ?>><?php esc_html_e('Bottom left', 'replynextai-chat'); ?></option><option value="right" <?php selected($o['whatsapp_position'], 'right'); ?>><?php esc_html_e('Bottom right', 'replynextai-chat'); ?></option></select></label><label class="rn-field"><span><?php esc_html_e('Delay', 'replynextai-chat'); ?></span><input type="number" min="0" max="30" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_delay]" value="<?php echo esc_attr($o['whatsapp_delay']); ?>" /></label></div><?php submit_button(__('Save WhatsApp Settings', 'replynextai-chat')); ?></div>
-        <div class="rn-card rn-preview-card"><span class="rn-step"><?php esc_html_e('LIVE PREVIEW', 'replynextai-chat'); ?></span><div class="rn-phone-preview"><div class="rn-phone-content"><span class="rn-whatsapp-preview <?php echo 'right' === $o['whatsapp_position'] ? 'is-right' : ''; ?>" data-rn-whatsapp-preview style="--rn-wa-color:<?php echo esc_attr($o['whatsapp_color']); ?>"><b>☎</b><em data-rn-preview-label><?php echo esc_html($o['whatsapp_label']); ?></em></span></div></div><p><code>[replynextai_whatsapp]</code></p></div></div></form></div><?php
+        <div class="rn-card rn-preview-card"><span class="rn-step"><?php esc_html_e('LIVE PREVIEW', 'replynextai-chat'); ?></span><p class="description"><?php esc_html_e('Click the button to test the customer experience.', 'replynextai-chat'); ?></p><div class="rn-phone-preview"><div class="rn-phone-content"><a href="<?php echo esc_url($preview_whatsapp_url); ?>" target="_blank" rel="noopener noreferrer" class="rn-whatsapp-preview <?php echo 'right' === $o['whatsapp_position'] ? 'is-right' : ''; ?>" data-rn-whatsapp-preview style="--rn-wa-color:<?php echo esc_attr($o['whatsapp_color']); ?>"><b>☎</b><em data-rn-preview-label><?php echo esc_html($o['whatsapp_label']); ?></em></a></div></div><p><code>[replynextai_whatsapp]</code></p></div></div></form></div><?php
     }
 
     public function display_page() {
         $o = $this->options();
-        ?><div class="wrap rn-wrap"><?php $this->page_header(__('Display Rules', 'replynextai-chat'), __('Control where both chat modules appear.', 'replynextai-chat')); ?><?php $this->form_open(); $this->preserve_fields(array('show_on', 'include_pages', 'exclude_pages', 'hide_mobile', 'hide_desktop')); ?><div class="rn-card rn-narrow"><label class="rn-field"><span><?php esc_html_e('Page targeting', 'replynextai-chat'); ?></span><select name="<?php echo esc_attr(self::OPTION_KEY); ?>[show_on]"><option value="all" <?php selected($o['show_on'], 'all'); ?>><?php esc_html_e('All public pages', 'replynextai-chat'); ?></option><option value="include" <?php selected($o['show_on'], 'include'); ?>><?php esc_html_e('Only selected IDs', 'replynextai-chat'); ?></option></select></label><?php $this->field('include_pages', __('Include page IDs', 'replynextai-chat'), $o['include_pages'], '12, 18, 24'); ?><?php $this->field('exclude_pages', __('Exclude page IDs', 'replynextai-chat'), $o['exclude_pages'], '30, 31'); ?><p class="description"><?php esc_html_e('Comma-separated page or post IDs. Exclusions always win.', 'replynextai-chat'); ?></p><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[hide_mobile]" value="1" <?php checked($o['hide_mobile'], '1'); ?> /> <?php esc_html_e('Hide on mobile', 'replynextai-chat'); ?></label><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[hide_desktop]" value="1" <?php checked($o['hide_desktop'], '1'); ?> /> <?php esc_html_e('Hide on desktop', 'replynextai-chat'); ?></label><?php submit_button(__('Save Display Rules', 'replynextai-chat')); ?></div></form></div><?php
+        $targets = get_posts(array('post_type' => array('page', 'post'), 'post_status' => 'publish', 'numberposts' => -1, 'orderby' => 'title', 'order' => 'ASC'));
+        ?><div class="wrap rn-wrap"><?php $this->page_header(__('Display Rules', 'replynextai-chat'), __('Control where both chat modules appear.', 'replynextai-chat')); ?><?php $this->form_open(); $this->preserve_fields(array('show_on', 'include_pages', 'exclude_pages', 'hide_mobile', 'hide_desktop')); ?><div class="rn-card rn-narrow"><label class="rn-field"><span><?php esc_html_e('Page targeting', 'replynextai-chat'); ?></span><select name="<?php echo esc_attr(self::OPTION_KEY); ?>[show_on]"><option value="all" <?php selected($o['show_on'], 'all'); ?>><?php esc_html_e('All public pages', 'replynextai-chat'); ?></option><option value="include" <?php selected($o['show_on'], 'include'); ?>><?php esc_html_e('Only selected pages/posts', 'replynextai-chat'); ?></option></select></label>
+        <?php $include_ids = array_map('strval', explode(',', $o['include_pages'])); $exclude_ids = array_map('strval', explode(',', $o['exclude_pages'])); ?>
+        <div class="rn-page-pickers"><div class="rn-page-picker"><strong><?php esc_html_e('Include pages', 'replynextai-chat'); ?></strong><small><?php esc_html_e('Show the chat only on selected pages.', 'replynextai-chat'); ?></small><div class="rn-page-list"><?php if (empty($targets)) : ?><em><?php esc_html_e('No published pages found.', 'replynextai-chat'); ?></em><?php else : foreach ($targets as $target) : ?><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[include_pages][]" value="<?php echo esc_attr($target->ID); ?>" <?php checked(in_array((string) $target->ID, $include_ids, true)); ?> /> <span><?php echo esc_html($target->post_title ?: __('(no title)', 'replynextai-chat')); ?></span></label><?php endforeach; endif; ?></div></div>
+        <div class="rn-page-picker"><strong><?php esc_html_e('Exclude pages', 'replynextai-chat'); ?></strong><small><?php esc_html_e('Hide the chat on selected pages. Exclusions always win.', 'replynextai-chat'); ?></small><div class="rn-page-list"><?php if (empty($targets)) : ?><em><?php esc_html_e('No published pages found.', 'replynextai-chat'); ?></em><?php else : foreach ($targets as $target) : ?><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[exclude_pages][]" value="<?php echo esc_attr($target->ID); ?>" <?php checked(in_array((string) $target->ID, $exclude_ids, true)); ?> /> <span><?php echo esc_html($target->post_title ?: __('(no title)', 'replynextai-chat')); ?></span></label><?php endforeach; endif; ?></div></div></div>
+        <p class="description"><?php esc_html_e('Click a page to select or deselect it.', 'replynextai-chat'); ?></p><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[hide_mobile]" value="1" <?php checked($o['hide_mobile'], '1'); ?> /> <?php esc_html_e('Hide on mobile', 'replynextai-chat'); ?></label><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[hide_desktop]" value="1" <?php checked($o['hide_desktop'], '1'); ?> /> <?php esc_html_e('Hide on desktop', 'replynextai-chat'); ?></label><?php submit_button(__('Save Display Rules', 'replynextai-chat')); ?></div></form></div><?php
     }
 
     public function connection_page() {
@@ -266,8 +285,14 @@ final class ReplyNextAI_Plugin {
         if (!function_exists('wc_get_products')) return false;
         $o = $this->options();
         if (!$o['api_token'] || !$o['server_url']) return false;
+        $total_synced = 0;
+        $page = 1;
+        $sync_id = wp_generate_uuid4();
+        do {
         $products = array();
-        foreach (wc_get_products(array('status' => 'publish', 'limit' => 100, 'return' => 'objects')) as $product) {
+        $batch = wc_get_products(array('status' => 'publish', 'limit' => 100, 'page' => $page, 'paginate' => true, 'return' => 'objects'));
+        $batch_products = is_object($batch) && isset($batch->products) ? $batch->products : array();
+        foreach ($batch_products as $product) {
             $image_id = $product->get_image_id();
             $category_names = wp_get_post_terms($product->get_id(), 'product_cat', array('fields' => 'names'));
             $products[] = array(
@@ -280,10 +305,11 @@ final class ReplyNextAI_Plugin {
                 'imageUrl' => $image_id ? wp_get_attachment_image_url($image_id, 'full') : '',
             );
         }
+        if (!$products) break;
         $response = wp_remote_post($o['server_url'] . '/api/wordpress/products', array(
             'timeout' => 30,
             'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
-            'body' => wp_json_encode(array('siteUrl' => home_url('/'), 'products' => $products)),
+            'body' => wp_json_encode(array('siteUrl' => home_url('/'), 'sync_id' => $sync_id, 'products' => $products)),
         ));
         if (is_wp_error($response) || 200 !== wp_remote_retrieve_response_code($response)) {
             set_transient('replynextai_last_sync', __('Last sync failed.', 'replynextai-chat'), DAY_IN_SECONDS);
@@ -291,7 +317,19 @@ final class ReplyNextAI_Plugin {
         }
         $body = json_decode(wp_remote_retrieve_body($response), true);
         if (empty($body['success'])) return false;
-        set_transient('replynextai_last_sync', sprintf(__('Last sync completed: %d products.', 'replynextai-chat'), absint($body['synced'])), DAY_IN_SECONDS);
+        $total_synced += absint($body['synced']);
+        $page++;
+        } while (count($batch_products) === 100);
+        $complete = wp_remote_post($o['server_url'] . '/api/wordpress/products', array(
+            'timeout' => 30,
+            'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
+            'body' => wp_json_encode(array('siteUrl' => home_url('/'), 'sync_id' => $sync_id, 'sync_complete' => true, 'products' => array())),
+        ));
+        if (is_wp_error($complete) || 200 !== wp_remote_retrieve_response_code($complete)) {
+            set_transient('replynextai_last_sync', __('Product sync incomplete; existing products were preserved.', 'replynextai-chat'), DAY_IN_SECONDS);
+            return false;
+        }
+        set_transient('replynextai_last_sync', sprintf(__('Last sync completed: %d products across %d batches.', 'replynextai-chat'), $total_synced, max(1, $page - 1)), DAY_IN_SECONDS);
         delete_transient('replynextai_status_cache');
         return true;
     }
@@ -307,7 +345,7 @@ final class ReplyNextAI_Plugin {
     public function frontend_assets() {
         if (is_admin() || !$this->display_allowed()) return;
         $o = $this->options();
-        if ('1' === $o['whatsapp_enabled'] && $o['whatsapp_number']) {
+        if (('1' === $o['whatsapp_enabled'] && $o['whatsapp_number']) || ('1' === $o['messenger_enabled'] && $o['messenger_url']) || ('1' === $o['call_enabled'] && $o['call_number'])) {
             wp_enqueue_style('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.css', array(), REPLYNEXTAI_VERSION);
             wp_enqueue_script('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.js', array(), REPLYNEXTAI_VERSION, true);
         }
@@ -329,23 +367,31 @@ final class ReplyNextAI_Plugin {
 
     public function render_sitewide_whatsapp() {
         $o = $this->options();
-        if ('1' === $o['whatsapp_enabled'] && $this->display_allowed()) echo $this->whatsapp_markup($o); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        if ($this->display_allowed()) echo $this->whatsapp_markup($o); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
     }
 
     public function whatsapp_shortcode($attributes) {
         $o = $this->options();
         $a = shortcode_atts(array('number' => $o['whatsapp_number'], 'message' => $o['whatsapp_message'], 'label' => $o['whatsapp_label']), $attributes, 'replynextai_whatsapp');
-        $config = array_merge($o, array('whatsapp_number' => preg_replace('/[^0-9]/', '', (string) $a['number']), 'whatsapp_message' => sanitize_text_field($a['message']), 'whatsapp_label' => sanitize_text_field($a['label'])));
+        $config = array_merge($o, array('whatsapp_enabled' => '1', 'whatsapp_number' => preg_replace('/[^0-9]/', '', (string) $a['number']), 'whatsapp_message' => sanitize_text_field($a['message']), 'whatsapp_label' => sanitize_text_field($a['label'])));
         wp_enqueue_style('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.css', array(), REPLYNEXTAI_VERSION);
         wp_enqueue_script('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.js', array(), REPLYNEXTAI_VERSION, true);
         return $this->whatsapp_markup($config);
     }
 
     private function whatsapp_markup($o) {
-        if ($this->whatsapp_rendered || empty($o['whatsapp_number'])) return '';
+        if ($this->whatsapp_rendered) return '';
         $this->whatsapp_rendered = true;
-        $url = 'https://wa.me/' . rawurlencode($o['whatsapp_number']) . '?text=' . rawurlencode($o['whatsapp_message']);
-        return sprintf('<a class="rn-wa-button rn-wa-%s" href="%s" target="_blank" rel="noopener noreferrer" aria-label="%s" style="--rn-wa-color:%s" data-rn-delay="%d"><span class="rn-wa-icon" aria-hidden="true">☎</span><span class="rn-wa-label">%s</span></a>', 'right' === $o['whatsapp_position'] ? 'right' : 'left', esc_url($url), esc_attr($o['whatsapp_label']), esc_attr($o['whatsapp_color']), absint($o['whatsapp_delay']), esc_html($o['whatsapp_label']));
+        $buttons = array();
+        if ('1' === $o['whatsapp_enabled'] && $o['whatsapp_number']) {
+            $url = 'https://wa.me/' . rawurlencode($o['whatsapp_number']) . '?text=' . rawurlencode($o['whatsapp_message']);
+            $buttons[] = sprintf('<a class="rn-wa-button rn-wa-%s" href="%s" target="_blank" rel="noopener noreferrer" aria-label="%s" style="--rn-wa-color:%s" data-rn-delay="%d"><span class="rn-wa-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M20 4.5A10 10 0 0 0 3.8 17.2L3 21l3.9-1A10 10 0 1 0 20 4.5Zm-8 15a8 8 0 0 1-4-1.1l-.3-.2-2.3.6.6-2.2-.2-.3A8 8 0 1 1 12 19.5Zm4.4-5.9c-.2-.1-1.4-.7-1.6-.8-.2-.1-.4-.1-.6.1l-.7.9c-.1.2-.3.2-.5.1a6.4 6.4 0 0 1-1.9-1.2 7 7 0 0 1-1.3-1.7c-.1-.2 0-.4.1-.5l.4-.5.2-.4c.1-.1 0-.3 0-.4l-.7-1.6c-.2-.4-.4-.4-.6-.4h-.5c-.2 0-.4.1-.6.3-.2.2-.8.8-.8 2s.8 2.3.9 2.5c.1.2 1.6 2.5 3.9 3.5.5.2.9.3 1.2.4.5.2 1 .1 1.4.1.4-.1 1.4-.6 1.6-1.1.2-.5.2-.9.1-1Z"/></svg></span><span class="rn-wa-label">%s</span></a>', 'right' === $o['whatsapp_position'] ? 'right' : 'left', esc_url($url), esc_attr($o['whatsapp_label']), esc_attr($o['whatsapp_color']), absint($o['whatsapp_delay']), esc_html($o['whatsapp_label']));
+        }
+        if ('1' === $o['messenger_enabled'] && $o['messenger_url']) $buttons[] = sprintf('<a class="rn-wa-button rn-wa-%s" href="%s" target="_blank" rel="noopener noreferrer" aria-label="%s" style="--rn-wa-color:#1877f2"><span class="rn-wa-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 2C6.5 2 2 6.1 2 11.1c0 2.9 1.5 5.5 4 7.2V22l3.5-1.9c.8.2 1.6.3 2.5.3 5.5 0 10-4.1 10-9.3S17.5 2 12 2Zm1 12.2-2.6-2.8-5 2.8 5.5-5.8 2.6 2.8 4.9-2.8-5.4 5.8Z"/></svg></span><span class="rn-wa-label">%s</span></a>', 'right' === $o['whatsapp_position'] ? 'right' : 'left', esc_url($o['messenger_url']), esc_attr($o['messenger_label']), esc_html($o['messenger_label']));
+        if ('1' === $o['call_enabled'] && $o['call_number']) $buttons[] = sprintf('<a class="rn-wa-button rn-wa-%s" href="%s" aria-label="%s" style="--rn-wa-color:#334155"><span class="rn-wa-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M6.6 2.8 9 2.2c.6-.1 1.2.2 1.5.8l1.2 2.8c.2.5.1 1-.2 1.4L10 8.9a13.6 13.6 0 0 0 5.1 5.1l1.7-1.5c.4-.3.9-.4 1.4-.2l2.8 1.2c.6.3.9.9.8 1.5l-.6 2.4c-.2.8-.9 1.4-1.7 1.5C10.3 19.8 4.2 13.7 5.1 4.5c.1-.8.7-1.5 1.5-1.7Z"/></svg></span><span class="rn-wa-label">%s</span></a>', 'right' === $o['whatsapp_position'] ? 'right' : 'left', esc_url('tel:' . $o['call_number']), esc_attr($o['call_label']), esc_html($o['call_label']));
+        if (!$buttons) return '';
+        $menu = implode('', $buttons);
+        return sprintf('<div class="rn-contact-float rn-contact-%s" data-rn-contact-float><div class="rn-contact-menu" data-rn-contact-menu>%s</div><button type="button" class="rn-contact-main" aria-expanded="false" aria-label="%s" data-rn-contact-toggle><span class="rn-contact-tooltip">%s</span><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v6a3.5 3.5 0 0 1-3.5 3.5H12l-4.5 4v-4.1A3.5 3.5 0 0 1 4 11.5v-6Zm4 3.2h8m-8 3h5"/></svg></button></div>', 'right' === $o['whatsapp_position'] ? 'right' : 'left', $menu, esc_attr__('Open contact options', 'replynextai-chat'), esc_html__('Contact Us', 'replynextai-chat'));
     }
 
     public function ai_shortcode($attributes) {
