@@ -222,10 +222,10 @@ final class ReplyNextAI_Plugin {
         $o = $this->options();
         $status = $this->remote_status(false);
         ?><div class="wrap rn-wrap"><?php $this->page_header(__('ReplyNext Connection', 'replynextai-chat'), __('Use a revocable WordPress token from your client portal—never enter your account password here.', 'replynextai-chat')); ?>
-        <?php if (isset($_GET['rn_notice'])) : ?><div class="notice <?php echo 'success' === $_GET['rn_notice'] ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php echo 'success' === $_GET['rn_notice'] ? esc_html__('Connection successful.', 'replynextai-chat') : esc_html__('Connection failed. Check the server URL and token.', 'replynextai-chat'); ?></p></div><?php endif; ?>
+        <?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- This is a read-only redirect notice; form processing is protected by settings_fields() and the admin-post nonce. */ if (isset($_GET['rn_notice'])) : ?><div class="notice <?php echo 'success' === sanitize_key(wp_unslash($_GET['rn_notice'])) ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php echo 'success' === sanitize_key(wp_unslash($_GET['rn_notice'])) ? esc_html__('Connection successful.', 'replynextai-chat') : esc_html__('Connection failed. Check the server URL and token.', 'replynextai-chat'); ?></p></div><?php endif; ?>
         <div class="rn-grid rn-grid-form"><div class="rn-card"><?php $this->form_open(); $this->preserve_fields(array('server_url', 'api_token')); ?><?php $this->field('server_url', __('ReplyNext server URL', 'replynextai-chat'), $o['server_url'], 'https://replynextai.com', 'url'); ?><label class="rn-field"><span><?php esc_html_e('WordPress connection token', 'replynextai-chat'); ?></span><input type="password" autocomplete="new-password" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_token]" value="<?php echo esc_attr($o['api_token']); ?>" placeholder="rnwp_live_..." /></label><p class="description"><?php esc_html_e('Generate this token from Client Portal → Integrations → AI Website Chat.', 'replynextai-chat'); ?></p><?php submit_button(__('Save Connection', 'replynextai-chat')); ?></form>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_test_connection" /><?php wp_nonce_field('replynextai_test_connection'); ?><?php submit_button(__('Test Connection', 'replynextai-chat'), 'secondary', 'submit', false); ?></form></div>
-        <div class="rn-card"><span class="rn-status <?php echo $status ? 'is-live' : 'is-off'; ?>"><?php echo $status ? esc_html__('Connected', 'replynextai-chat') : esc_html__('Not connected', 'replynextai-chat'); ?></span><h2><?php esc_html_e('Connection status', 'replynextai-chat'); ?></h2><?php if ($status) : ?><p><strong><?php echo esc_html($status['company']['name']); ?></strong></p><p><?php echo esc_html(sprintf(__('Plan: %s · Products: %d · Leads: %d', 'replynextai-chat'), $status['company']['planName'] ?: $status['company']['planId'], $status['stats']['products'], $status['stats']['totalLeads'])); ?></p><?php else : ?><p><?php esc_html_e('Save a valid token and test the connection.', 'replynextai-chat'); ?></p><?php endif; ?></div></div></div><?php
+        <div class="rn-card"><span class="rn-status <?php echo $status ? 'is-live' : 'is-off'; ?>"><?php echo $status ? esc_html__('Connected', 'replynextai-chat') : esc_html__('Not connected', 'replynextai-chat'); ?></span><h2><?php esc_html_e('Connection status', 'replynextai-chat'); ?></h2><?php if ($status) : ?><p><strong><?php echo esc_html($status['company']['name']); ?></strong></p><?php /* translators: 1: plan name, 2: product count, 3: lead count. */ ?><p><?php echo esc_html(sprintf(__('Plan: %1$s · Products: %2$d · Leads: %3$d', 'replynextai-chat'), $status['company']['planName'] ?: $status['company']['planId'], $status['stats']['products'], $status['stats']['totalLeads'])); ?></p><?php else : ?><p><?php esc_html_e('Save a valid token and test the connection.', 'replynextai-chat'); ?></p><?php endif; ?></div></div></div><?php
     }
 
     public function handle_test_connection() {
@@ -330,7 +330,8 @@ final class ReplyNextAI_Plugin {
             set_transient('replynextai_last_sync', __('Product sync incomplete; existing products were preserved.', 'replynextai-chat'), DAY_IN_SECONDS);
             return false;
         }
-        set_transient('replynextai_last_sync', sprintf(__('Last sync completed: %d products across %d batches.', 'replynextai-chat'), $total_synced, max(1, $page - 1)), DAY_IN_SECONDS);
+        /* translators: 1: number of products synchronized, 2: number of batches used. */
+        set_transient('replynextai_last_sync', sprintf(__('Last sync completed: %1$d products across %2$d batches.', 'replynextai-chat'), $total_synced, max(1, $page - 1)), DAY_IN_SECONDS);
         delete_transient('replynextai_status_cache');
         return true;
     }
@@ -419,6 +420,7 @@ final class ReplyNextAI_Plugin {
 
     public function ai_script_attributes($tag, $handle, $src) {
         if (self::AI_HANDLE !== $handle || !$this->ai_config) return $tag;
+        /* phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- This modifies the tag for the already-enqueued external widget to pass its documented data attributes. */
         return sprintf('<script src="%s" data-company-id="%s" data-visitor-name="%s" data-visitor-email="%s" data-is-user="%s" id="%s-js"></script>', esc_url($src), esc_attr($this->ai_config['company_id']), esc_attr($this->ai_config['name']), esc_attr($this->ai_config['email']), esc_attr($this->ai_config['is_user']), esc_attr(self::AI_HANDLE));
     }
 }

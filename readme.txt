@@ -1,8 +1,8 @@
-=== ReplyNext AI Chat & WhatsApp ===
+=== ReplyNext AI – AI Chat Assistant for WooCommerce ===
 Contributors: replynextai
-Tags: whatsapp, messenger, live chat, ai chatbot, customer support, sales
+Tags: live chat, ai chatbot, customer support, woocommerce, whatsapp
 Requires at least: 6.0
-Tested up to: 6.8
+Tested up to: 7.0
 Requires PHP: 7.4
 Stable tag: 1.2.0
 License: GPLv2 or later

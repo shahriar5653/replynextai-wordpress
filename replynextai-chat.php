@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name: ReplyNext AI Chat & WhatsApp
+ * Plugin Name: ReplyNext AI – AI Chat Assistant for WooCommerce
  * Plugin URI: https://replynextai.com
  * Description: AI website chat plus WhatsApp, Messenger, and phone contact buttons, targeting, and WooCommerce catalog sync.
  * Version: 1.2.0
