@@ -1,0 +1,101 @@
+(function () {
+  "use strict";
+  function init() {
+    document
+      .querySelectorAll("[data-rn-contact-float]")
+      .forEach(function (root) {
+        var toggle = root.querySelector("[data-rn-contact-toggle]"),
+          dragging = false,
+          moved = false,
+          startX = 0,
+          startY = 0,
+          startLeft = 0,
+          startTop = 0;
+        function position(x, y) {
+          var r = root.getBoundingClientRect(),
+            w = window.innerWidth,
+            h = window.innerHeight;
+          root.style.left = Math.max(8, Math.min(x, w - r.width - 8)) + "px";
+          root.style.top = Math.max(8, Math.min(y, h - r.height - 8)) + "px";
+          root.style.right = "auto";
+          root.style.bottom = "auto";
+        }
+        function saved() {
+          try {
+            var p = JSON.parse(
+              localStorage.getItem("replynextai_contact_position") || "null",
+            );
+            if (p && typeof p.x === "number") position(p.x, p.y);
+          } catch (e) {}
+        }
+        function down(e) {
+          var p = e.touches ? e.touches[0] : e;
+          var r = root.getBoundingClientRect();
+          dragging = true;
+          moved = false;
+          startX = p.clientX;
+          startY = p.clientY;
+          startLeft = r.left;
+          startTop = r.top;
+          root.classList.add("rn-contact-dragging");
+        }
+        function move(e) {
+          if (!dragging) return;
+          var p = e.touches ? e.touches[0] : e;
+          if (Math.abs(p.clientX - startX) + Math.abs(p.clientY - startY) > 6)
+            moved = true;
+          if (moved) {
+            e.preventDefault();
+            position(
+              startLeft + p.clientX - startX,
+              startTop + p.clientY - startY,
+            );
+          }
+        }
+        function up() {
+          if (!dragging) return;
+          dragging = false;
+          root.classList.remove("rn-contact-dragging");
+          if (moved) {
+            try {
+              var r = root.getBoundingClientRect();
+              localStorage.setItem(
+                "replynextai_contact_position",
+                JSON.stringify({ x: r.left, y: r.top }),
+              );
+            } catch (e) {}
+          }
+        }
+        toggle.addEventListener("pointerdown", down);
+        window.addEventListener("pointermove", move, { passive: false });
+        window.addEventListener("pointerup", up);
+        toggle.addEventListener("click", function (e) {
+          if (moved) {
+            e.preventDefault();
+            e.stopPropagation();
+            moved = false;
+            return;
+          }
+          e.stopPropagation();
+          var open = root.classList.toggle("rn-contact-open");
+          toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+        root.querySelectorAll(".rn-wa-button").forEach(function (b) {
+          b.addEventListener("click", function () {
+            root.classList.remove("rn-contact-open");
+            toggle.setAttribute("aria-expanded", "false");
+          });
+        });
+        document.addEventListener("click", function (e) {
+          if (!root.contains(e.target)) {
+            root.classList.remove("rn-contact-open");
+            toggle.setAttribute("aria-expanded", "false");
+          }
+        });
+        saved();
+      });
+  }
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", init);
+  else init();
+})();

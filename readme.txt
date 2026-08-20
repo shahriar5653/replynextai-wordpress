@@ -10,6 +10,21 @@ License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 Add ReplyNext AI Website Chat and configurable WhatsApp, Messenger, and direct-call contact buttons to WordPress.
 
+WooCommerce is optional. ReplyNext AI chat, the storefront widget, and the
+WhatsApp, Messenger, and direct-call contact features work without WooCommerce.
+WooCommerce is required only for the optional product catalog synchronization
+feature.
+
+== Source code ==
+
+The complete plugin source is publicly available at:
+https://github.com/shahriar5653/replynextai-wordpress
+
+The human-readable source for the storefront contact-widget script is
+`assets/frontend.source.js`. The minified runtime file loaded by WordPress is
+`assets/frontend.js`; it is distributed as-is and no build or minification
+pipeline is required to install or use the plugin.
+
 == Description ==
 
 ReplyNext AI Chat & WhatsApp helps website owners start conversations and
