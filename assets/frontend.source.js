@@ -92,6 +92,13 @@
             toggle.setAttribute("aria-expanded", "false");
           }
         });
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape") {
+            root.classList.remove("rn-contact-open");
+            toggle.setAttribute("aria-expanded", "false");
+            toggle.focus();
+          }
+        });
         saved();
       });
   }

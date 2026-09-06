@@ -38,5 +38,19 @@
       if (input) input.addEventListener('input', updatePreview);
     });
     updatePreview();
+
+    document.querySelectorAll('[data-rn-media-choose]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (!window.wp || !wp.media) return;
+        var field = document.getElementById(button.getAttribute('data-rn-media-choose'));
+        var preview = document.getElementById(button.getAttribute('data-rn-media-preview'));
+        var frame = wp.media({ title: 'Choose launcher icon', button: { text: 'Use icon' }, multiple: false, library: { type: 'image' } });
+        frame.on('select', function () { var item = frame.state().get('selection').first().toJSON(); if (!item || !item.id || !item.url) return; field.value = item.id; preview.src = item.sizes && item.sizes.thumbnail ? item.sizes.thumbnail.url : item.url; preview.style.display = ''; });
+        frame.open();
+      });
+    });
+    document.querySelectorAll('[data-rn-media-remove]').forEach(function (button) {
+      button.addEventListener('click', function () { var field = document.getElementById(button.getAttribute('data-rn-media-remove')); var preview = document.getElementById(button.getAttribute('data-rn-media-preview')); field.value = '0'; preview.src = ''; preview.style.display = 'none'; });
+    });
   });
 })();

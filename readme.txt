@@ -30,16 +30,17 @@ pipeline is required to install or use the plugin.
 ReplyNext AI Chat & WhatsApp helps website owners start conversations and
 capture sales opportunities with two independent modules.
 
-= Free WhatsApp =
+= Contact Channels =
 
-The free WhatsApp button uses the website owner's own phone number and opens a
-standard `wa.me` conversation. It does not require a WhatsApp API, ReplyNext
-account, or paid plan.
+Contact Channels provides WhatsApp, Messenger, and phone contact buttons. The
+WhatsApp channel opens a standard `wa.me` conversation and does not require a
+WhatsApp API, ReplyNext account, or paid plan.
 
 = ReplyNext AI Website Chat =
 
 Existing ReplyNext clients can connect the AI Website Chat module configured in
-their client portal by entering the ReplyNext server URL and Company ID.
+their client portal by entering a WordPress connection token. The plugin
+automatically creates the website authorization needed for the connected site.
 
 Features:
 
@@ -73,7 +74,7 @@ own privacy policies; this plugin does not request their APIs or permissions.
 1. Upload `replynextai-chat.zip` in Plugins → Add New → Upload Plugin.
 2. Activate ReplyNext AI Chat & WhatsApp.
 3. Open the new ReplyNext AI menu.
-4. Configure Free WhatsApp, AI Website Chat, or both.
+4. Configure Contact Channels, AI Website Chat, or both.
 5. Test the website in a private browser window.
 
 == Shortcodes ==
@@ -82,9 +83,7 @@ AI Website Chat:
 
 `[replynextai_chat]`
 
-`[replynextai_chat company_id="12" server_url="https://replynextai.com"]`
-
-Free WhatsApp:
+Contact Channels:
 
 `[replynextai_whatsapp]`
 
@@ -92,17 +91,19 @@ Free WhatsApp:
 
 == Frequently Asked Questions ==
 
-= Does the free WhatsApp module use the WhatsApp API? =
+= Do Contact Channels use the WhatsApp API? =
 
 No. It opens a direct `wa.me` link using the configured phone number.
 
 = Do I need a ReplyNext account? =
 
-Not for Free WhatsApp. A ReplyNext account is required for AI Website Chat.
+Not for Contact Channels. A ReplyNext account is required for AI Website Chat.
 
-= Where do I find the Company ID? =
+= How does AI Website Chat connect? =
 
-Open the ReplyNext client portal and go to Integrations → AI Website Chat.
+Create a WordPress Plugin Connection in the ReplyNext client portal, enter its
+token in the plugin, and use Test Connection. The plugin automatically prepares
+the secure website chat authorization for the connected site.
 
 = Can I control where the buttons appear? =
 
@@ -122,7 +123,7 @@ mobile/desktop visibility.
 = 1.1.0 =
 
 * Added a top-level ReplyNext dashboard and guided onboarding.
-* Added a free WhatsApp click-to-chat module.
+* Added Contact Channels with WhatsApp click-to-chat.
 * Added visual previews and modular settings pages.
 * Added page and device display rules.
 * Added `[replynextai_whatsapp]` shortcode.
