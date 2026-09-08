@@ -514,6 +514,7 @@ final class ReplyNextAI_Plugin {
                 'title' => $product->get_name(),
                 'handle' => $product->get_slug(),
                 'productUrl' => get_permalink($product->get_id()),
+                'imageUrl' => $image_id ? wp_get_attachment_image_url($image_id, 'full') : null,
                 'searchableText' => wp_strip_all_tags($product->get_short_description() ?: $product->get_description()),
                 'vendor' => $product->get_attribute('pa_brand'),
                 'productType' => implode(', ', $category_names),
