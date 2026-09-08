@@ -86,6 +86,7 @@ final class ReplyNextAI_Plugin {
         add_action('admin_post_replynextai_sync_products', array($this, 'handle_sync_products'));
         add_action('save_post_product', array($this, 'schedule_product_sync'), 20, 3);
         add_action('replynextai_deferred_product_sync', array($this, 'sync_products'));
+        add_action('rest_api_init', array($this, 'register_commerce_routes'));
         add_filter('plugin_action_links_' . plugin_basename(REPLYNEXTAI_FILE), array($this, 'plugin_links'));
         add_action('wp_enqueue_scripts', array($this, 'frontend_assets'));
         add_action('wp_footer', array($this, 'render_sitewide_whatsapp'));
@@ -96,6 +97,98 @@ final class ReplyNextAI_Plugin {
 
     private function options() {
         return wp_parse_args(get_option(self::OPTION_KEY, array()), self::defaults());
+    }
+
+    private function canonical_origin($value) {
+        $parts = wp_parse_url((string) $value);
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host']) || !in_array(strtolower($parts['scheme']), array('http', 'https'), true)) return '';
+        $scheme = strtolower($parts['scheme']);
+        $host = strtolower($parts['host']);
+        $port = isset($parts['port']) && (int) $parts['port'] !== ('https' === $scheme ? 443 : 80) ? ':' . (int) $parts['port'] : '';
+        return $scheme . '://' . $host . $port;
+    }
+
+    public function register_commerce_routes() {
+        register_rest_route('replynextai/v1', '/product-verify', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'verify_woocommerce_products'),
+            // The HMAC below authenticates the ReplyNext server. WordPress REST
+            // authentication cannot be used because this is server-to-server.
+            'permission_callback' => '__return_true',
+        ));
+    }
+
+    public function verify_woocommerce_products($request) {
+        $o = $this->options();
+        $payload = $request->get_json_params();
+        $timestamp = (string) $request->get_header('x-replynext-timestamp');
+        $signature = (string) $request->get_header('x-replynext-signature');
+        $issued_at = absint($timestamp);
+        $site_url = $this->canonical_origin(home_url('/'));
+        $expected_company = absint($o['company_id']);
+        if (!$o['api_token'] || !$site_url || !is_array($payload) || !$issued_at || abs(time() - $issued_at) > 300 || empty($payload['companyId']) || $expected_company !== absint($payload['companyId']) || empty($payload['siteUrl']) || $site_url !== $this->canonical_origin($payload['siteUrl']) || !is_array($payload['products']) || count($payload['products']) > 3 || !is_array($payload['requestedFacts'])) {
+            return new WP_REST_Response(array('success' => false, 'error' => 'Unauthorized verification request'), 401);
+        }
+        $allowed_facts = array('price', 'sale_price', 'availability', 'variants');
+        $facts = array_values(array_unique(array_filter($payload['requestedFacts'], function ($fact) use ($allowed_facts) { return is_string($fact) && in_array($fact, $allowed_facts, true); })));
+        sort($facts, SORT_STRING);
+        if ($facts !== $payload['requestedFacts']) return new WP_REST_Response(array('success' => false, 'error' => 'Invalid verification request'), 400);
+        $canonical_payload = array(
+            'companyId' => $expected_company,
+            'siteUrl' => $site_url,
+            'requestedFacts' => $facts,
+            'products' => $payload['products'],
+        );
+        $expected = hash_hmac('sha256', $timestamp . '.' . hash('sha256', wp_json_encode($canonical_payload)), hash('sha256', $o['api_token']));
+        if (!hash_equals($expected, $signature) || !function_exists('wc_get_product')) return new WP_REST_Response(array('success' => false, 'error' => 'Unauthorized verification request'), 401);
+
+        $products = array();
+        foreach ($payload['products'] as $requested) {
+            $product_id = is_array($requested) && isset($requested['externalProductId']) ? absint($requested['externalProductId']) : 0;
+            $product = $product_id ? wc_get_product($product_id) : false;
+            if (!$product || 'product' !== get_post_type($product_id)) continue;
+            $products[] = $this->live_woocommerce_product($product, $site_url, $facts);
+        }
+        return new WP_REST_Response(array('success' => true, 'products' => $products), 200);
+    }
+
+    private function live_woocommerce_product($product, $site_url, $facts) {
+        $include_price = in_array('price', $facts, true) || in_array('sale_price', $facts, true);
+        $include_availability = in_array('availability', $facts, true) || in_array('variants', $facts, true);
+        $attributes = array();
+        foreach ($product->get_attributes() as $attribute) {
+            $attributes[] = is_object($attribute) && method_exists($attribute, 'get_name') ? sanitize_text_field($attribute->get_name()) : '';
+        }
+        $variant_ids = $product->is_type('variable') ? array_slice($product->get_children(), 0, 100) : array($product->get_id());
+        $variants = array();
+        foreach ($variant_ids as $variant_id) {
+            $variant = wc_get_product($variant_id);
+            if (!$variant) continue;
+            $row = array(
+                'id' => (string) $variant->get_id(),
+                'title' => sanitize_text_field($variant->get_name()),
+                'selectedOptions' => array(),
+            );
+            foreach ((array) $variant->get_attributes() as $name => $value) {
+                $row['selectedOptions'][] = array('name' => sanitize_text_field(str_replace('attribute_', '', (string) $name)), 'value' => sanitize_text_field((string) $value));
+            }
+            if ($include_price) {
+                $row['price'] = (string) $variant->get_price();
+                $row['regularPrice'] = (string) $variant->get_regular_price();
+                if ($variant->is_on_sale()) $row['salePrice'] = (string) $variant->get_sale_price();
+            }
+            if ($include_availability) $row['availableForSale'] = $variant->is_in_stock() && $variant->is_purchasable();
+            $variants[] = $row;
+        }
+        return array(
+            'provider' => 'woocommerce',
+            'storeIdentity' => $site_url,
+            'externalProductId' => (string) $product->get_id(),
+            'title' => sanitize_text_field($product->get_name()),
+            'status' => sanitize_text_field($product->get_status()),
+            'optionNames' => array_values(array_filter($attributes)),
+            'variants' => $variants,
+        );
     }
 
     public function register_settings() {
@@ -354,8 +447,10 @@ final class ReplyNextAI_Plugin {
         $total_synced = 0;
         $page = 1;
         $sync_id = wp_generate_uuid4();
+        $index_failed = false;
         do {
         $products = array();
+        $index_products = array();
         $batch = wc_get_products(array('status' => 'publish', 'limit' => 100, 'page' => $page, 'paginate' => true, 'return' => 'objects'));
         $batch_products = is_object($batch) && isset($batch->products) ? $batch->products : array();
         foreach ($batch_products as $product) {
@@ -370,6 +465,22 @@ final class ReplyNextAI_Plugin {
                 'url' => get_permalink($product->get_id()),
                 'imageUrl' => $image_id ? wp_get_attachment_image_url($image_id, 'full') : '',
             );
+            $attributes = array();
+            foreach ($product->get_attributes() as $attribute) {
+                if (is_object($attribute) && method_exists($attribute, 'get_name')) $attributes[] = sanitize_text_field($attribute->get_name());
+            }
+            $index_products[] = array(
+                'externalProductId' => (string) $product->get_id(),
+                'title' => $product->get_name(),
+                'handle' => $product->get_slug(),
+                'productUrl' => get_permalink($product->get_id()),
+                'searchableText' => wp_strip_all_tags($product->get_short_description() ?: $product->get_description()),
+                'vendor' => $product->get_attribute('pa_brand'),
+                'productType' => implode(', ', $category_names),
+                'productStatus' => $product->get_status(),
+                'optionSummary' => array_values(array_filter($attributes)),
+                'sourceUpdatedAt' => get_post_modified_time('c', true, $product->get_id()),
+            );
         }
         if (!$products) break;
         $response = wp_remote_post($o['server_url'] . '/api/wordpress/products', array(
@@ -383,6 +494,12 @@ final class ReplyNextAI_Plugin {
         }
         $body = json_decode(wp_remote_retrieve_body($response), true);
         if (empty($body['success'])) return false;
+        $index_response = wp_remote_post($o['server_url'] . '/api/wordpress/catalog', array(
+            'timeout' => 30,
+            'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
+            'body' => wp_json_encode(array('sync_id' => $sync_id, 'products' => $index_products)),
+        ));
+        if (is_wp_error($index_response) || 200 !== wp_remote_retrieve_response_code($index_response)) $index_failed = true;
         $total_synced += absint($body['synced']);
         $page++;
         } while (count($batch_products) === 100);
@@ -395,8 +512,14 @@ final class ReplyNextAI_Plugin {
             set_transient('replynextai_last_sync', __('Product sync incomplete; existing products were preserved.', 'replynext-ai-chat-assistant-for-woocommerce'), DAY_IN_SECONDS);
             return false;
         }
+        $index_complete = wp_remote_post($o['server_url'] . '/api/wordpress/catalog', array(
+            'timeout' => 30,
+            'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
+            'body' => wp_json_encode(array('sync_id' => $sync_id, 'sync_complete' => true, 'products' => array())),
+        ));
+        if (is_wp_error($index_complete) || 200 !== wp_remote_retrieve_response_code($index_complete)) $index_failed = true;
         /* translators: 1: number of products synchronized, 2: number of batches used. */
-        set_transient('replynextai_last_sync', sprintf(__('Last sync completed: %1$d products across %2$d batches.', 'replynext-ai-chat-assistant-for-woocommerce'), $total_synced, max(1, $page - 1)), DAY_IN_SECONDS);
+        set_transient('replynextai_last_sync', $index_failed ? __('Product copy sync completed; the discovery index will retry on the next refresh.', 'replynext-ai-chat-assistant-for-woocommerce') : sprintf(__('Last sync completed: %1$d products across %2$d batches.', 'replynext-ai-chat-assistant-for-woocommerce'), $total_synced, max(1, $page - 1)), DAY_IN_SECONDS);
         delete_transient('replynextai_status_cache');
         return true;
     }
