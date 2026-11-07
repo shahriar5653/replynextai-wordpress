@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ReplyNext AI – AI Chat Assistant for WooCommerce
  * Description: AI website chat plus WhatsApp, Messenger, and phone contact buttons, targeting, and WooCommerce catalog sync.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: ReplyNext AI
  * Author URI: https://replynextai.com
  * License: GPL-2.0-or-later
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('REPLYNEXTAI_VERSION', '1.2.0');
+define('REPLYNEXTAI_VERSION', '1.3.0');
 define('REPLYNEXTAI_FILE', __FILE__);
 define('REPLYNEXTAI_DIR', plugin_dir_path(__FILE__));
 define('REPLYNEXTAI_URL', plugin_dir_url(__FILE__));

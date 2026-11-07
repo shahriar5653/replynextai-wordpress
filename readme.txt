@@ -4,7 +4,7 @@ Tags: live chat, ai chatbot, customer support, woocommerce, whatsapp
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -111,6 +111,14 @@ Yes. Display Rules supports selected page IDs, excluded page IDs, and separate
 mobile/desktop visibility.
 
 == Changelog ==
+
+= 1.3.0 =
+* Added secure automatic website-widget provisioning for connected WordPress sites.
+* Added lightweight WooCommerce product discovery with canonical product links and primary images.
+* Added live WooCommerce verification for current prices, sale status, availability, and variations.
+* Improved bounded background catalog synchronization, including concurrency protection and widget-provisioning locking.
+* Hardened tenant isolation, website-origin validation, and secure ReplyNext SaaS compatibility.
+* Preserved the existing WooCommerce product synchronization path for backward compatibility.
 
 = 1.1.1 =
 * Keeps third-party WordPress admin notices above the branded ReplyNext dashboard header.

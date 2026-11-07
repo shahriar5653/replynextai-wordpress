@@ -115,6 +115,12 @@ final class ReplyNextAI_Plugin {
     }
 
     public function register_commerce_routes() {
+        register_rest_route('replynextai/v1', '/order-status', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'limited_order_status'),
+            // Authenticated by the server-to-server HMAC in the handler.
+            'permission_callback' => '__return_true',
+        ));
         register_rest_route('replynextai/v1', '/product-verify', array(
             'methods' => 'POST',
             'callback' => array($this, 'verify_woocommerce_products'),
@@ -122,6 +128,35 @@ final class ReplyNextAI_Plugin {
             // authentication cannot be used because this is server-to-server.
             'permission_callback' => '__return_true',
         ));
+    }
+
+    public function limited_order_status($request) {
+        $o = $this->options();
+        $payload = $request->get_json_params();
+        $timestamp = (string) $request->get_header('x-replynext-timestamp');
+        $signature = (string) $request->get_header('x-replynext-signature');
+        $site_url = $this->canonical_origin(home_url('/'));
+        if (!$o['api_token'] || !$site_url || !is_array($payload) || !preg_match('/^[0-9]{10}$/D', $timestamp) || abs(time() - (int) $timestamp) > 60 || !isset($payload['companyId'], $payload['siteUrl'], $payload['orderId'], $payload['billingPhone']) || !is_int($payload['companyId']) || absint($o['company_id']) !== $payload['companyId'] || $site_url !== $payload['siteUrl'] || !is_string($payload['orderId']) || !preg_match('/^[1-9][0-9]{0,19}$/D', $payload['orderId']) || !is_string($payload['billingPhone']) || !preg_match('/^[0-9]{7,15}$/D', $payload['billingPhone'])) {
+            return new WP_REST_Response(array('success' => false, 'error' => 'Unauthorized order request'), 401);
+        }
+        $canonical_payload = array('companyId' => $payload['companyId'], 'siteUrl' => $site_url, 'orderId' => $payload['orderId'], 'billingPhone' => $payload['billingPhone']);
+        $expected = hash_hmac('sha256', $timestamp . '.' . hash('sha256', wp_json_encode($canonical_payload, JSON_UNESCAPED_SLASHES)), hash('sha256', $o['api_token']));
+        if (!hash_equals($expected, $signature)) return new WP_REST_Response(array('success' => false, 'error' => 'Unauthorized order request'), 401);
+        $response = array('success' => true, 'matched' => false);
+        if (function_exists('wc_get_order') && strlen($payload['orderId']) <= strlen((string) PHP_INT_MAX) && (float) $payload['orderId'] <= PHP_INT_MAX) {
+            $order = wc_get_order((int) $payload['orderId']);
+            if ($order && is_a($order, 'WC_Order')) {
+                $phone = preg_replace('/[\s()+.\-]/', '', (string) $order->get_billing_phone());
+                // Full normalized match only: never compare last digits or names.
+                if (preg_match('/^[0-9]{7,15}$/D', $phone) && hash_equals($phone, $payload['billingPhone'])) {
+                    $status = $order->get_status();
+                    if (in_array($status, array('pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed', 'checkout-draft'), true)) $response = array('success' => true, 'matched' => true, 'status' => $status);
+                }
+            }
+        }
+        $result = new WP_REST_Response($response, 200);
+        $result->header('Cache-Control', 'no-store, private');
+        return $result;
     }
 
     public function verify_woocommerce_products($request) {
@@ -207,7 +242,10 @@ final class ReplyNextAI_Plugin {
         $output = self::defaults();
         $url = isset($input['server_url']) ? untrailingslashit(esc_url_raw(trim($input['server_url']))) : '';
         $output['server_url'] = $url && wp_http_validate_url($url) ? $url : $current['server_url'];
-        $output['company_id'] = isset($input['company_id']) ? preg_replace('/[^0-9]/', '', (string) $input['company_id']) : '';
+        // The company mapping is set only after the authenticated WordPress
+        // connection test. Keep the existing internal value when a settings
+        // form does not submit it; it is never a merchant-facing setting.
+        $output['company_id'] = $current['company_id'];
         $output['api_token'] = isset($input['api_token']) ? sanitize_text_field($input['api_token']) : $current['api_token'];
         foreach (array('ai_enabled', 'ai_sitewide', 'share_user_data', 'contact_show_label', 'whatsapp_enabled', 'whatsapp_show_label', 'messenger_enabled', 'messenger_show_label', 'call_enabled', 'call_show_label', 'hide_mobile', 'hide_desktop') as $checkbox) {
             $output[$checkbox] = empty($input[$checkbox]) ? '0' : '1';
@@ -299,11 +337,11 @@ final class ReplyNextAI_Plugin {
 
     public function dashboard_page() {
         $o = $this->options();
-        $ai_ready = $o['company_id'] && '1' === $o['ai_enabled'];
+        $ai_ready = $o['api_token'] && get_option('replynextai_widget_id') && '1' === $o['ai_enabled'];
         $wa_ready = $o['whatsapp_number'] && '1' === $o['whatsapp_enabled'];
         ?>
         <div class="wrap rn-wrap"><?php $this->page_header(__('Dashboard', 'replynext-ai-chat-assistant-for-woocommerce'), __('Launch free WhatsApp chat or connect your ReplyNext AI sales assistant.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
-        <div class="rn-grid rn-grid-3"><?php $this->status_card(__('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'), $ai_ready, $ai_ready ? __('Live and connected', 'replynext-ai-chat-assistant-for-woocommerce') : __('Company ID and activation required', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-ai'); ?><?php $this->status_card(__('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'), $wa_ready, $wa_ready ? __('Live using your own number', 'replynext-ai-chat-assistant-for-woocommerce') : __('Add a WhatsApp number', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-whatsapp'); ?><?php $this->status_card(__('Display Rules', 'replynext-ai-chat-assistant-for-woocommerce'), true, __('Control pages and devices', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-display'); ?></div>
+        <div class="rn-grid rn-grid-3"><?php $this->status_card(__('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'), $ai_ready, $ai_ready ? __('Live and connected', 'replynext-ai-chat-assistant-for-woocommerce') : __('WordPress token and activation required', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-ai'); ?><?php $this->status_card(__('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'), $wa_ready, $wa_ready ? __('Live using your own number', 'replynext-ai-chat-assistant-for-woocommerce') : __('Add a WhatsApp number', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-whatsapp'); ?><?php $this->status_card(__('Display Rules', 'replynext-ai-chat-assistant-for-woocommerce'), true, __('Control pages and devices', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-display'); ?></div>
         <div class="rn-card rn-setup-card"><div><span class="rn-step"><?php esc_html_e('QUICK START', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h2><?php esc_html_e('Start converting visitors in three steps', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2></div><ol class="rn-checklist"><li class="<?php echo $o['server_url'] ? 'done' : ''; ?>"><span>1</span><?php esc_html_e('Confirm your ReplyNext server URL', 'replynext-ai-chat-assistant-for-woocommerce'); ?></li><li class="<?php echo ($ai_ready || $wa_ready) ? 'done' : ''; ?>"><span>2</span><?php esc_html_e('Enable AI Chat or Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'); ?></li><li><span>3</span><?php esc_html_e('Open your website privately and send a test message', 'replynext-ai-chat-assistant-for-woocommerce'); ?></li></ol></div>
         <div class="rn-grid rn-grid-2"><div class="rn-card"><h2><?php esc_html_e('Contact Channels, no API required', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><?php esc_html_e('Open a direct conversation using your own WhatsApp number.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=replynextai-whatsapp')); ?>"><?php esc_html_e('Configure Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'); ?></a></div><div class="rn-card rn-upgrade"><h2><?php esc_html_e('Turn chat into an AI sales agent', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><?php esc_html_e('Capture leads and manage AI conversations in ReplyNext.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><a class="button button-secondary" href="<?php echo esc_url(admin_url('admin.php?page=replynextai-ai')); ?>"><?php esc_html_e('Connect AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></a></div></div></div>
         <?php
@@ -331,11 +369,36 @@ final class ReplyNextAI_Plugin {
 
     public function ai_page() {
         $o = $this->options();
-        ?><div class="wrap rn-wrap"><?php $this->page_header(__('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'), __('Connect the AI chat module configured in your ReplyNext client portal.', 'replynext-ai-chat-assistant-for-woocommerce')); ?><?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- The action handler validates its POST nonce; this query value only selects a bounded notice. */ if (isset($_GET['rn_widget_refresh'])) : ?><div class="notice <?php echo 'success' === sanitize_key(wp_unslash($_GET['rn_widget_refresh'])) ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php echo 'success' === sanitize_key(wp_unslash($_GET['rn_widget_refresh'])) ? esc_html__('Widget connection refreshed successfully.', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Unable to refresh the widget connection. Your existing connection settings were kept.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p></div><?php endif; ?><?php $this->form_open(); $this->preserve_fields(array('server_url', 'company_id', 'ai_enabled', 'ai_sitewide', 'share_user_data')); ?><div class="rn-grid rn-grid-form"><div class="rn-card">
-        <label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Also enable it in the ReplyNext portal.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_enabled]" value="1" <?php checked($o['ai_enabled'], '1'); ?> /></label>
-        <?php $this->field('server_url', __('ReplyNext server URL', 'replynext-ai-chat-assistant-for-woocommerce'), $o['server_url'], 'https://replynextai.com', 'url'); ?><?php $this->field('company_id', __('Company ID', 'replynext-ai-chat-assistant-for-woocommerce'), $o['company_id'], '12'); ?>
-        <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_sitewide]" value="1" <?php checked($o['ai_sitewide'], '1'); ?> /> <?php esc_html_e('Show AI chat on every allowed page', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[share_user_data]" value="1" <?php checked($o['share_user_data'], '1'); ?> /> <?php esc_html_e('Pass logged-in WordPress user name and email', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><p class="description"><?php esc_html_e('Enable only when covered by your privacy notice.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php submit_button(__('Save AI Chat Settings', 'replynext-ai-chat-assistant-for-woocommerce')); ?></div>
-        <div class="rn-card rn-preview-card"><span class="rn-step"><?php esc_html_e('LIVE PREVIEW', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><p class="description"><?php esc_html_e('Preview and manage your customer-facing chat from the ReplyNext Client Portal.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><div class="rn-site-preview"><div class="rn-browser-bar"><i></i><i></i><i></i></div><div class="rn-preview-content"><h3><?php esc_html_e('ReplyNext AI customer chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h3><p><?php esc_html_e('Open the ReplyNext Client Portal to preview and manage your live chat.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><a href="https://replynextai.com" target="_blank" rel="noopener noreferrer" class="button button-primary"><?php esc_html_e('Open ReplyNext Client Portal', 'replynext-ai-chat-assistant-for-woocommerce'); ?></a></div></div><p><code>[replynextai_chat]</code></p></div></div></form><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_refresh_widget_connection" /><?php wp_nonce_field('replynextai_refresh_widget_connection'); ?><?php submit_button(__('Refresh Widget Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'secondary', 'submit', false); ?></form></div><?php
+        ?>
+        <div class="wrap rn-wrap">
+            <?php $this->page_header(__('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'), __('Connect the AI chat module configured in your ReplyNext client portal.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
+            <?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- The action handler validates its POST nonce; this query value only selects a bounded notice. */ if (isset($_GET['rn_widget_refresh'])) : ?>
+                <div class="notice <?php echo 'success' === sanitize_key(wp_unslash($_GET['rn_widget_refresh'])) ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php echo 'success' === sanitize_key(wp_unslash($_GET['rn_widget_refresh'])) ? esc_html__('Widget connection refreshed successfully.', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Unable to refresh the widget connection. Your existing connection settings were kept.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p></div>
+            <?php endif; ?>
+            <?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- This is a read-only redirect notice; the action handler validates its POST nonce. */ if (isset($_GET['rn_notice'])) : ?>
+                <?php $notice = sanitize_key(wp_unslash($_GET['rn_notice'])); ?>
+                <div class="notice <?php echo 'success' === $notice ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php if ('success' === $notice) { esc_html_e('Connection successful. Your secure website widget is ready.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_revoked' === $notice) { esc_html_e('Secure AI Website Chat authorization is revoked. Reactivate or remove the website authorization in ReplyNext before retrying.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_error' === $notice) { esc_html_e('Secure AI Website Chat authorization could not be created. Your connection settings were kept; please try again.', 'replynext-ai-chat-assistant-for-woocommerce'); } else { esc_html_e('Connection failed. Check the server URL and token.', 'replynext-ai-chat-assistant-for-woocommerce'); } ?></p></div>
+            <?php endif; ?>
+
+            <?php $this->form_open(); $this->preserve_fields(array('server_url', 'api_token', 'ai_enabled', 'ai_sitewide', 'share_user_data')); ?>
+                <div class="rn-grid rn-grid-form">
+                    <div class="rn-card">
+                        <label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Also enable it in the ReplyNext portal.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_enabled]" value="1" <?php checked($o['ai_enabled'], '1'); ?> /></label>
+                        <?php $this->field('server_url', __('ReplyNext server URL', 'replynext-ai-chat-assistant-for-woocommerce'), $o['server_url'], 'https://replynextai.com', 'url'); ?>
+                        <label class="rn-field"><span><?php esc_html_e('WordPress connection token', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="password" autocomplete="new-password" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_token]" value="<?php echo esc_attr($o['api_token']); ?>" placeholder="rnwp_live_..." /></label>
+                        <p class="description"><?php esc_html_e('Create a WordPress Plugin Connection in Client Portal → Integrations → WordPress, then paste its token here.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                        <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_sitewide]" value="1" <?php checked($o['ai_sitewide'], '1'); ?> /> <?php esc_html_e('Show AI chat on every allowed page', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label>
+                        <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[share_user_data]" value="1" <?php checked($o['share_user_data'], '1'); ?> /> <?php esc_html_e('Pass logged-in WordPress user name and email', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label>
+                        <p class="description"><?php esc_html_e('Enable only when covered by your privacy notice.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                        <?php submit_button(__('Save Connection & AI Chat Settings', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
+                    </div>
+                    <div class="rn-card rn-preview-card"><span class="rn-step"><?php esc_html_e('LIVE PREVIEW', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><p class="description"><?php esc_html_e('Preview and manage your customer-facing chat from the ReplyNext Client Portal.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><div class="rn-site-preview"><div class="rn-browser-bar"><i></i><i></i><i></i></div><div class="rn-preview-content"><h3><?php esc_html_e('ReplyNext AI customer chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h3><p><?php esc_html_e('Save the connection, then test it to create the secure widget authorization for this WordPress site.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p></div></div><p><code>[replynextai_chat]</code></p></div>
+                </div>
+            </form>
+
+            <div class="rn-card rn-narrow"><h2><?php esc_html_e('Secure connection', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><?php esc_html_e('After saving your server URL and WordPress connection token, test the connection to create or reuse this site’s secure widget.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_test_connection" /><input type="hidden" name="return_page" value="replynextai-ai" /><?php wp_nonce_field('replynextai_test_connection'); ?><?php submit_button(__('Test Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'secondary', 'submit', false); ?></form><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_refresh_widget_connection" /><?php wp_nonce_field('replynextai_refresh_widget_connection'); ?><?php submit_button(__('Refresh Widget Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'secondary', 'submit', false); ?></form></div>
+        </div>
+        <?php
     }
 
     public function whatsapp_page() {
@@ -365,7 +428,7 @@ final class ReplyNextAI_Plugin {
         $status = $this->remote_status(false);
         ?><div class="wrap rn-wrap"><?php $this->page_header(__('ReplyNext Connection', 'replynext-ai-chat-assistant-for-woocommerce'), __('Use a revocable WordPress token from your client portal—never enter your account password here.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
         <?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- This is a read-only redirect notice; form processing is protected by settings_fields() and the admin-post nonce. */ if (isset($_GET['rn_notice'])) : ?><?php $notice = sanitize_key(wp_unslash($_GET['rn_notice'])); ?><div class="notice <?php echo 'success' === $notice ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php if ('success' === $notice) { esc_html_e('Connection successful.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_revoked' === $notice) { esc_html_e('Secure AI Website Chat authorization is revoked. Reactivate or remove the website authorization in ReplyNext before retrying.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_error' === $notice) { esc_html_e('Secure AI Website Chat authorization could not be created. Your connection settings were kept; please try again.', 'replynext-ai-chat-assistant-for-woocommerce'); } else { esc_html_e('Connection failed. Check the server URL and token.', 'replynext-ai-chat-assistant-for-woocommerce'); } ?></p></div><?php endif; ?>
-        <div class="rn-grid rn-grid-form"><div class="rn-card"><?php $this->form_open(); $this->preserve_fields(array('server_url', 'api_token')); ?><?php $this->field('server_url', __('ReplyNext server URL', 'replynext-ai-chat-assistant-for-woocommerce'), $o['server_url'], 'https://replynextai.com', 'url'); ?><label class="rn-field"><span><?php esc_html_e('WordPress connection token', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="password" autocomplete="new-password" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_token]" value="<?php echo esc_attr($o['api_token']); ?>" placeholder="rnwp_live_..." /></label><p class="description"><?php esc_html_e('Generate this token from Client Portal → Integrations → AI Website Chat.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php submit_button(__('Save Connection', 'replynext-ai-chat-assistant-for-woocommerce')); ?></form>
+        <div class="rn-grid rn-grid-form"><div class="rn-card"><?php $this->form_open(); $this->preserve_fields(array('server_url', 'api_token')); ?><?php $this->field('server_url', __('ReplyNext server URL', 'replynext-ai-chat-assistant-for-woocommerce'), $o['server_url'], 'https://replynextai.com', 'url'); ?><label class="rn-field"><span><?php esc_html_e('WordPress connection token', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="password" autocomplete="new-password" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_token]" value="<?php echo esc_attr($o['api_token']); ?>" placeholder="rnwp_live_..." /></label><p class="description"><?php esc_html_e('Generate this token from Client Portal → Integrations → WordPress.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php submit_button(__('Save Connection', 'replynext-ai-chat-assistant-for-woocommerce')); ?></form>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_test_connection" /><?php wp_nonce_field('replynextai_test_connection'); ?><?php submit_button(__('Test Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'secondary', 'submit', false); ?></form></div>
         <div class="rn-card"><span class="rn-status <?php echo $status ? 'is-live' : 'is-off'; ?>"><?php echo $status ? esc_html__('Connected', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Not connected', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h2><?php esc_html_e('Connection status', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><?php if ($status) : ?><p><strong><?php echo esc_html($status['company']['name']); ?></strong></p><?php /* translators: 1: plan name, 2: product count, 3: lead count. */ ?><p><?php echo esc_html(sprintf(__('Plan: %1$s · Products: %2$d · Leads: %3$d', 'replynext-ai-chat-assistant-for-woocommerce'), $status['company']['planName'] ?: $status['company']['planId'], $status['stats']['products'], $status['stats']['totalLeads'])); ?></p><?php else : ?><p><?php esc_html_e('Save a valid token and test the connection.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php endif; ?></div></div></div><?php
     }
@@ -390,7 +453,9 @@ final class ReplyNextAI_Plugin {
             $this->last_widget_provision_error = 'authorization';
         }
         $notice = $success ? 'success' : ('revoked' === $this->last_widget_provision_error ? 'widget_revoked' : ($status ? 'widget_error' : 'error'));
-        wp_safe_redirect(admin_url('admin.php?page=replynextai-connection&rn_notice=' . $notice));
+        $return_page = isset($_POST['return_page']) ? sanitize_key(wp_unslash($_POST['return_page'])) : 'replynextai-connection';
+        if (!in_array($return_page, array('replynextai-ai', 'replynextai-connection'), true)) $return_page = 'replynextai-connection';
+        wp_safe_redirect(admin_url('admin.php?page=' . $return_page . '&rn_notice=' . $notice));
         exit;
     }
 
@@ -595,7 +660,49 @@ final class ReplyNextAI_Plugin {
     }
 
     public function help_page() {
-        ?><div class="wrap rn-wrap"><?php $this->page_header(__('Help & Shortcodes', 'replynext-ai-chat-assistant-for-woocommerce'), __('Use automatic display, shortcodes, or both.', 'replynext-ai-chat-assistant-for-woocommerce')); ?><div class="rn-grid rn-grid-2"><div class="rn-card"><h2><?php esc_html_e('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><code>[replynextai_chat]</code></p><p><code>[replynextai_chat company_id="12" server_url="https://replynextai.com"]</code></p></div><div class="rn-card"><h2><?php esc_html_e('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><code>[replynextai_whatsapp]</code></p><p><code>[replynextai_whatsapp number="8801XXXXXXXXX" message="Hello"]</code></p></div></div></div><?php
+        $o = $this->options();
+        $status = $this->remote_status(false);
+        $widget_id = sanitize_text_field((string) get_option('replynextai_widget_id', ''));
+        $ai_configured = !empty($o['api_token']) && !empty($widget_id);
+        $company_name = is_array($status) && !empty($status['company']['name']) ? sanitize_text_field($status['company']['name']) : '';
+        $ai_connection_message = $company_name ? sprintf(__('Connected to %s. This shortcode uses this site’s secure widget connection automatically.', 'replynext-ai-chat-assistant-for-woocommerce'), $company_name) : __('A secure widget connection is saved for this WordPress site.', 'replynext-ai-chat-assistant-for-woocommerce');
+        $contact_configured = ('1' === $o['whatsapp_enabled'] && !empty($o['whatsapp_number'])) || ('1' === $o['messenger_enabled'] && !empty($o['messenger_url'])) || ('1' === $o['call_enabled'] && !empty($o['call_number']));
+        ?>
+        <div class="wrap rn-wrap">
+            <?php $this->page_header(__('Help & Shortcodes', 'replynext-ai-chat-assistant-for-woocommerce'), __('Use automatic display, shortcodes, or both.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
+            <div class="rn-grid rn-grid-2">
+                <div class="rn-card">
+                    <span class="rn-status <?php echo $ai_configured ? 'is-live' : 'is-off'; ?>"><?php echo $ai_configured ? esc_html__('Connected', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Demo', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span>
+                    <h2><?php esc_html_e('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
+                    <?php if ($ai_configured) : ?>
+                        <p><?php echo esc_html($ai_connection_message); ?></p>
+                        <p><code>[replynextai_chat]</code></p>
+                        <p class="description"><?php esc_html_e('No Company ID, widget ID, or token is needed in the shortcode.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                    <?php else : ?>
+                        <p><?php esc_html_e('Demo example — save your ReplyNext server URL and WordPress connection token, then test the connection before using chat.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                        <p><code>[replynextai_chat]</code></p>
+                    <?php endif; ?>
+                </div>
+
+                <div class="rn-card">
+                    <span class="rn-status <?php echo $contact_configured ? 'is-live' : 'is-off'; ?>"><?php echo $contact_configured ? esc_html__('Configured', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Demo', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span>
+                    <h2><?php esc_html_e('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
+                    <?php if ($contact_configured) : ?>
+                        <p><?php esc_html_e('This shortcode uses your saved Contact Channels settings.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                        <p><code>[replynextai_whatsapp]</code></p>
+                        <ul>
+                            <?php if ('1' === $o['whatsapp_enabled'] && $o['whatsapp_number']) : ?><li><?php echo esc_html(sprintf(__('WhatsApp: %s', 'replynext-ai-chat-assistant-for-woocommerce'), $o['whatsapp_number'])); ?></li><?php endif; ?>
+                            <?php if ('1' === $o['messenger_enabled'] && $o['messenger_url']) : ?><li><?php echo esc_html(sprintf(__('Messenger: %s', 'replynext-ai-chat-assistant-for-woocommerce'), $o['messenger_url'])); ?></li><?php endif; ?>
+                            <?php if ('1' === $o['call_enabled'] && $o['call_number']) : ?><li><?php echo esc_html(sprintf(__('Phone: %s', 'replynext-ai-chat-assistant-for-woocommerce'), $o['call_number'])); ?></li><?php endif; ?>
+                        </ul>
+                    <?php else : ?>
+                        <p><?php esc_html_e('Demo example — configure a channel first, then the shortcode uses your saved settings.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                        <p><code>[replynextai_whatsapp number="8801XXXXXXXXX" message="Hello!"]</code></p>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        <?php
     }
 
     private function field($key, $label, $value, $placeholder = '', $type = 'text') {

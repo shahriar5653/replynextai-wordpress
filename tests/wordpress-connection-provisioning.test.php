@@ -18,5 +18,12 @@ expect_source(false !== strpos($source, "if (!\$widget_id) \$widget_id = \$this-
 expect_source(false !== strpos($source, "if ('1' === \$o['ai_enabled'] && '1' === \$o['ai_sitewide']) \$this->enqueue_ai(\$o);"), 'AI chat remains separately gated by existing display settings');
 expect_source(false !== strpos($source, 'data-widget-id'), 'frontend emits only the opaque widget ID');
 expect_source(false === strpos($source, 'data-company-id'), 'no browser company ID authority is emitted');
+expect_source(false !== strpos($source, "\$this->field('server_url'"), 'AI Website Chat settings expose the configured server URL');
+expect_source(false !== strpos($source, 'WordPress connection token'), 'AI Website Chat settings expose the secure connection token field');
+expect_source(false === strpos($source, "\$this->field('company_id'"), 'Company ID is no longer a merchant-facing AI Website Chat setting');
+expect_source(false !== strpos($source, "\$output['company_id'] = \$current['company_id'];"), 'Company mapping is preserved internally and is not writable through settings forms');
+expect_source(false !== strpos($source, '$ai_configured = !empty($o[\'api_token\']) && !empty($widget_id);'), 'Help page derives AI chat state from the secure connection rather than Company ID');
+expect_source(false !== strpos($source, '$contact_configured ='), 'Help page derives Contact Channels examples from saved channel configuration');
+expect_source(false !== strpos($source, 'Demo example'), 'Help page provides clearly labelled examples before configuration');
 
 echo "PASS: WordPress connection provisioning lifecycle source checks\n";
