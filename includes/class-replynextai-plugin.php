@@ -115,6 +115,12 @@ final class ReplyNextAI_Plugin {
     }
 
     public function register_commerce_routes() {
+        register_rest_route('replynextai/v1', '/order-billing-recipient', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'order_billing_recipient'),
+            // Only an operation-specific server HMAC authorizes this handler.
+            'permission_callback' => '__return_true',
+        ));
         register_rest_route('replynextai/v1', '/order-status', array(
             'methods' => 'POST',
             'callback' => array($this, 'limited_order_status'),
@@ -128,6 +134,47 @@ final class ReplyNextAI_Plugin {
             // authentication cannot be used because this is server-to-server.
             'permission_callback' => '__return_true',
         ));
+    }
+
+    public function order_billing_recipient($request) {
+        $o = $this->options();
+        $payload = $request->get_json_params();
+        $timestamp = (string) $request->get_header('x-replynext-timestamp');
+        $signature = (string) $request->get_header('x-replynext-signature');
+        $site_url = $this->canonical_origin(home_url('/'));
+        if (!$o['api_token'] || !$site_url || 0 !== strpos($site_url, 'https://') || strlen($request->get_body()) > 4096 || !is_array($payload) || array_diff(array_keys($payload), array('companyId', 'siteUrl', 'orderId', 'challengeId')) || !preg_match('/^[0-9]{13}$/D', $timestamp) || abs(microtime(true) * 1000 - (float) $timestamp) >= 60000 || !preg_match('/^[a-f0-9]{64}$/D', $signature) || !isset($payload['companyId'], $payload['siteUrl'], $payload['orderId'], $payload['challengeId']) || !is_int($payload['companyId']) || $payload['companyId'] !== absint($o['company_id']) || $payload['siteUrl'] !== $site_url || !is_string($payload['orderId']) || !preg_match('/^[1-9][0-9]{0,19}$/D', $payload['orderId']) || !is_string($payload['challengeId']) || !preg_match('/^[a-f0-9]{64}$/D', $payload['challengeId'])) {
+            return new WP_REST_Response(array('success' => false, 'error' => 'Unauthorized order request'), 401);
+        }
+        $binding = array('companyId' => $payload['companyId'], 'siteUrl' => $site_url, 'orderId' => $payload['orderId'], 'challengeId' => $payload['challengeId']);
+        $hash = hash('sha256', wp_json_encode($binding, JSON_UNESCAPED_SLASHES));
+        $secret = hash('sha256', $o['api_token']);
+        $expected = hash_hmac('sha256', $timestamp . '.order-billing-recipient.' . $hash, $secret);
+        if (!hash_equals($expected, $signature)) return new WP_REST_Response(array('success' => false, 'error' => 'Unauthorized order request'), 401);
+        $sealed = null;
+        try {
+        if (function_exists('openssl_encrypt') && function_exists('wc_get_order') && strlen($payload['orderId']) <= strlen((string) PHP_INT_MAX) && (float) $payload['orderId'] <= PHP_INT_MAX) {
+            $order = wc_get_order((int) $payload['orderId']);
+            if ($order && is_a($order, 'WC_Order')) {
+                $email = (string) $order->get_billing_email();
+                if (strlen($email) <= 254 && is_email($email) && !preg_match('/[\s<>,;]/', $email)) {
+                    $key = hash_hmac('sha256', 'replynext-order-recipient-key-v1', $secret, true);
+                    $iv = random_bytes(12);
+                    $tag = '';
+                    $data = array_merge($binding, array('email' => $email, 'expiresAt' => (int) floor(microtime(true) * 1000) + 60000));
+                    $encrypted = openssl_encrypt(wp_json_encode($data, JSON_UNESCAPED_SLASHES), 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, 'replynext-order-recipient-v1.' . $hash, 16);
+                    if (false !== $encrypted) {
+                        $parts = array($iv, $tag, $encrypted);
+                        $encoded = array_map(function ($part) { return rtrim(strtr(base64_encode($part), '+/', '-_'), '='); }, $parts);
+                        $sealed = implode('.', $encoded);
+                    }
+                }
+            }
+        }
+        } catch (Throwable $ignored) { $sealed = null; }
+        // No plaintext recipient or OTP. The caller keeps the outward response generic.
+        $response = new WP_REST_Response(array('success' => true, 'sealedRecipient' => $sealed), 200);
+        $response->header('Cache-Control', 'no-store, private');
+        return $response;
     }
 
     public function limited_order_status($request) {
@@ -499,8 +546,14 @@ final class ReplyNextAI_Plugin {
     public function handle_sync_products() {
         if (!current_user_can('manage_options')) wp_die(esc_html__('Unauthorized', 'replynext-ai-chat-assistant-for-woocommerce'));
         check_admin_referer('replynextai_sync_products');
-        $this->queue_catalog_sync(1);
-        set_transient('replynextai_last_sync', __('Product synchronization scheduled in the background.', 'replynext-ai-chat-assistant-for-woocommerce'), DAY_IN_SECONDS);
+        $scheduled = $this->queue_catalog_sync(1, true);
+        set_transient(
+            'replynextai_last_sync',
+            $scheduled
+                ? __('Product synchronization scheduled in the background.', 'replynext-ai-chat-assistant-for-woocommerce')
+                : __('Product sync could not be scheduled. Please try again or ask your site host to check WordPress cron.', 'replynext-ai-chat-assistant-for-woocommerce'),
+            DAY_IN_SECONDS
+        );
         wp_safe_redirect(admin_url('admin.php?page=replynextai-woocommerce&rn_sync=scheduled'));
         exit;
     }
@@ -511,12 +564,27 @@ final class ReplyNextAI_Plugin {
         $this->queue_catalog_sync(60);
     }
 
-    private function queue_catalog_sync($delay = 60) {
+    private function queue_catalog_sync($delay = 60, $recover_stale_queue = false) {
         // add_option is atomic, preventing save_post/manual requests from
         // enqueueing duplicate workers before WP-Cron observes the event.
-        if (!add_option(self::CATALOG_QUEUED_OPTION, '1', '', 'no')) return;
+        if (wp_next_scheduled('replynextai_deferred_product_sync')) return true;
+        if (!add_option(self::CATALOG_QUEUED_OPTION, '1', '', 'no')) {
+            // A prior request may have died after setting the queue marker but
+            // before the cron event was saved. Only a deliberate admin retry
+            // may recover that orphaned marker; product-save workers never do.
+            if (!$recover_stale_queue || get_option(self::CATALOG_LOCK_OPTION, false)) return false;
+            delete_option(self::CATALOG_QUEUED_OPTION);
+            if (!add_option(self::CATALOG_QUEUED_OPTION, '1', '', 'no')) return false;
+        }
         $scheduled = wp_schedule_single_event(time() + max(1, (int) $delay), 'replynextai_deferred_product_sync');
-        if (false === $scheduled || is_wp_error($scheduled)) delete_option(self::CATALOG_QUEUED_OPTION);
+        if (false === $scheduled || is_wp_error($scheduled)) {
+            // WordPress can report a duplicate event as false. Treat it as
+            // successful only when the event is actually present.
+            if (wp_next_scheduled('replynextai_deferred_product_sync')) return true;
+            delete_option(self::CATALOG_QUEUED_OPTION);
+            return false;
+        }
+        return true;
     }
 
     private function acquire_lock($option_name, $ttl) {
