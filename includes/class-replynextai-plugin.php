@@ -115,6 +115,18 @@ final class ReplyNextAI_Plugin {
     }
 
     public function register_commerce_routes() {
+        register_rest_route('replynextai/v1', '/checkout-create', array(
+            'methods' => 'POST', 'callback' => array($this, 'checkout_create'),
+            'permission_callback' => '__return_true', // Explicit signed confirmation plus durable idempotency.
+        ));
+        register_rest_route('replynextai/v1', '/checkout-requirements', array(
+            'methods' => 'POST', 'callback' => array($this, 'checkout_requirements'),
+            'permission_callback' => '__return_true', // Operation-specific server HMAC below.
+        ));
+        register_rest_route('replynextai/v1', '/checkout-quote', array(
+            'methods' => 'POST', 'callback' => array($this, 'checkout_quote'),
+            'permission_callback' => '__return_true', // Read-only; never creates an order.
+        ));
         register_rest_route('replynextai/v1', '/order-billing-recipient', array(
             'methods' => 'POST',
             'callback' => array($this, 'order_billing_recipient'),
@@ -134,6 +146,21 @@ final class ReplyNextAI_Plugin {
             // authentication cannot be used because this is server-to-server.
             'permission_callback' => '__return_true',
         ));
+    }
+
+    public function checkout_create($request) {
+        require_once __DIR__ . '/class-replynextai-checkout.php';
+        return ReplyNextAI_Checkout::handle($request, $this->options(), 'checkout-create');
+    }
+
+    public function checkout_requirements($request) {
+        require_once __DIR__ . '/class-replynextai-checkout.php';
+        return ReplyNextAI_Checkout::handle($request, $this->options(), 'checkout-requirements');
+    }
+
+    public function checkout_quote($request) {
+        require_once __DIR__ . '/class-replynextai-checkout.php';
+        return ReplyNextAI_Checkout::handle($request, $this->options(), 'checkout-quote');
     }
 
     public function order_billing_recipient($request) {
