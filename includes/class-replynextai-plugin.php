@@ -292,7 +292,17 @@ final class ReplyNextAI_Plugin {
                 $row['regularPrice'] = (string) $variant->get_regular_price();
                 if ($variant->is_on_sale()) $row['salePrice'] = (string) $variant->get_sale_price();
             }
-            if ($include_availability) $row['availableForSale'] = $variant->is_in_stock() && $variant->is_purchasable();
+            if ($include_availability) {
+                $row['availableForSale'] = $variant->is_in_stock() && $variant->is_purchasable();
+                // Parent-managed variations share their parent's stock pool.
+                // Report live quantity only when WooCommerce actually tracks it.
+                $stock_owner = wc_get_product($variant->get_stock_managed_by_id());
+                $stock_quantity = $stock_owner && $stock_owner->managing_stock() ? $stock_owner->get_stock_quantity() : null;
+                if (is_numeric($stock_quantity) && (float) $stock_quantity >= 0 && (float) $stock_quantity <= 9007199254740991 && floor((float) $stock_quantity) === (float) $stock_quantity) {
+                    $row['stockQuantity'] = (int) $stock_quantity;
+                    $row['stockScope'] = $stock_owner->get_id() === $variant->get_id() ? 'variant' : 'shared_parent';
+                }
+            }
             $variants[] = $row;
         }
         return array(

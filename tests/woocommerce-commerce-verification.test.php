@@ -15,7 +15,7 @@ expect_woo_source(false !== strpos($source, "hash_hmac('sha256'"), 'live verific
 expect_woo_source(false !== strpos($source, "hash('sha256', \$o['api_token'])"), 'the signing key is derived from the existing connection token and never exposed');
 expect_woo_source(false !== strpos($source, "wc_get_product(\$product_id)"), 'live verification resolves exact WooCommerce products server-side');
 expect_woo_source(false !== strpos($source, "array_slice(\$product->get_children(), 0, 100)"), 'variation results are bounded');
-expect_woo_source(false === strpos($source, 'get_stock_quantity'), 'exact inventory quantities are not returned');
+expect_woo_source(false !== strpos($source, 'get_stock_managed_by_id'), 'live stock resolves the authoritative parent or variant stock owner');
 expect_woo_source(false !== strpos($source, "'/api/wordpress/products'"), 'legacy product-copy sync remains intact during the transition');
 
 echo "PASS: WooCommerce compact index and live verification source checks\n";
