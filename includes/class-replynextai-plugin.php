@@ -13,6 +13,8 @@ final class ReplyNextAI_Plugin {
     private $ai_config = null;
     private $whatsapp_rendered = false;
     private $last_widget_provision_error = '';
+    /** Set only during the server-authenticated connection test, never from a settings form. */
+    private $verified_connection_company_id = null;
 
     const CATALOG_LOCK_OPTION = 'replynextai_catalog_sync_lock';
     const CATALOG_STATE_TRANSIENT = 'replynextai_catalog_sync_state';
@@ -336,6 +338,7 @@ final class ReplyNextAI_Plugin {
         // connection test. Keep the existing internal value when a settings
         // form does not submit it; it is never a merchant-facing setting.
         $output['company_id'] = $current['company_id'];
+        if (null !== $this->verified_connection_company_id) $output['company_id'] = $this->verified_connection_company_id;
         $output['api_token'] = isset($input['api_token']) ? sanitize_text_field($input['api_token']) : $current['api_token'];
         foreach (array('ai_enabled', 'ai_sitewide', 'share_user_data', 'contact_show_label', 'whatsapp_enabled', 'whatsapp_show_label', 'messenger_enabled', 'messenger_show_label', 'call_enabled', 'call_show_label', 'hide_mobile', 'hide_desktop') as $checkbox) {
             $output[$checkbox] = empty($input[$checkbox]) ? '0' : '1';
@@ -467,7 +470,7 @@ final class ReplyNextAI_Plugin {
             <?php endif; ?>
             <?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- This is a read-only redirect notice; the action handler validates its POST nonce. */ if (isset($_GET['rn_notice'])) : ?>
                 <?php $notice = sanitize_key(wp_unslash($_GET['rn_notice'])); ?>
-                <div class="notice <?php echo 'success' === $notice ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php if ('success' === $notice) { esc_html_e('Connection successful. Your secure website widget is ready.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_revoked' === $notice) { esc_html_e('Secure AI Website Chat authorization is revoked. Reactivate or remove the website authorization in ReplyNext before retrying.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_error' === $notice) { esc_html_e('Secure AI Website Chat authorization could not be created. Your connection settings were kept; please try again.', 'replynext-ai-chat-assistant-for-woocommerce'); } else { esc_html_e('Connection failed. Check the server URL and token.', 'replynext-ai-chat-assistant-for-woocommerce'); } ?></p></div>
+                <div class="notice <?php echo 'success' === $notice ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php if ('success' === $notice) { esc_html_e('Connection successful. Your secure website widget is ready.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('company_save_error' === $notice) { esc_html_e('Connection verified, but the company binding could not be saved. Please try again or contact support.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_revoked' === $notice) { esc_html_e('Secure AI Website Chat authorization is revoked. Reactivate or remove the website authorization in ReplyNext before retrying.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_error' === $notice) { esc_html_e('Secure AI Website Chat authorization could not be created. Your connection settings were kept; please try again.', 'replynext-ai-chat-assistant-for-woocommerce'); } else { esc_html_e('Connection failed. Check the server URL and token.', 'replynext-ai-chat-assistant-for-woocommerce'); } ?></p></div>
             <?php endif; ?>
 
             <?php $this->form_open(); $this->preserve_fields(array('server_url', 'api_token', 'ai_enabled', 'ai_sitewide', 'share_user_data')); ?>
@@ -517,7 +520,7 @@ final class ReplyNextAI_Plugin {
         $o = $this->options();
         $status = $this->remote_status(false);
         ?><div class="wrap rn-wrap"><?php $this->page_header(__('ReplyNext Connection', 'replynext-ai-chat-assistant-for-woocommerce'), __('Use a revocable WordPress token from your client portal—never enter your account password here.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
-        <?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- This is a read-only redirect notice; form processing is protected by settings_fields() and the admin-post nonce. */ if (isset($_GET['rn_notice'])) : ?><?php $notice = sanitize_key(wp_unslash($_GET['rn_notice'])); ?><div class="notice <?php echo 'success' === $notice ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php if ('success' === $notice) { esc_html_e('Connection successful.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_revoked' === $notice) { esc_html_e('Secure AI Website Chat authorization is revoked. Reactivate or remove the website authorization in ReplyNext before retrying.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_error' === $notice) { esc_html_e('Secure AI Website Chat authorization could not be created. Your connection settings were kept; please try again.', 'replynext-ai-chat-assistant-for-woocommerce'); } else { esc_html_e('Connection failed. Check the server URL and token.', 'replynext-ai-chat-assistant-for-woocommerce'); } ?></p></div><?php endif; ?>
+        <?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- This is a read-only redirect notice; form processing is protected by settings_fields() and the admin-post nonce. */ if (isset($_GET['rn_notice'])) : ?><?php $notice = sanitize_key(wp_unslash($_GET['rn_notice'])); ?><div class="notice <?php echo 'success' === $notice ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php if ('success' === $notice) { esc_html_e('Connection successful.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('company_save_error' === $notice) { esc_html_e('Connection verified, but the company binding could not be saved. Please try again or contact support.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_revoked' === $notice) { esc_html_e('Secure AI Website Chat authorization is revoked. Reactivate or remove the website authorization in ReplyNext before retrying.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_error' === $notice) { esc_html_e('Secure AI Website Chat authorization could not be created. Your connection settings were kept; please try again.', 'replynext-ai-chat-assistant-for-woocommerce'); } else { esc_html_e('Connection failed. Check the server URL and token.', 'replynext-ai-chat-assistant-for-woocommerce'); } ?></p></div><?php endif; ?>
         <div class="rn-grid rn-grid-form"><div class="rn-card"><?php $this->form_open(); $this->preserve_fields(array('server_url', 'api_token')); ?><?php $this->field('server_url', __('ReplyNext server URL', 'replynext-ai-chat-assistant-for-woocommerce'), $o['server_url'], 'https://replynextai.com', 'url'); ?><label class="rn-field"><span><?php esc_html_e('WordPress connection token', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="password" autocomplete="new-password" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_token]" value="<?php echo esc_attr($o['api_token']); ?>" placeholder="rnwp_live_..." /></label><p class="description"><?php esc_html_e('Generate this token from Client Portal → Integrations → WordPress.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php submit_button(__('Save Connection', 'replynext-ai-chat-assistant-for-woocommerce')); ?></form>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_test_connection" /><?php wp_nonce_field('replynextai_test_connection'); ?><?php submit_button(__('Test Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'secondary', 'submit', false); ?></form></div>
         <div class="rn-card"><span class="rn-status <?php echo $status ? 'is-live' : 'is-off'; ?>"><?php echo $status ? esc_html__('Connected', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Not connected', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h2><?php esc_html_e('Connection status', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><?php if ($status) : ?><p><strong><?php echo esc_html($status['company']['name']); ?></strong></p><?php /* translators: 1: plan name, 2: product count, 3: lead count. */ ?><p><?php echo esc_html(sprintf(__('Plan: %1$s · Products: %2$d · Leads: %3$d', 'replynext-ai-chat-assistant-for-woocommerce'), $status['company']['planName'] ?: $status['company']['planId'], $status['stats']['products'], $status['stats']['totalLeads'])); ?></p><?php else : ?><p><?php esc_html_e('Save a valid token and test the connection.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php endif; ?></div></div></div><?php
@@ -527,14 +530,20 @@ final class ReplyNextAI_Plugin {
         if (!current_user_can('manage_options')) wp_die(esc_html__('Unauthorized', 'replynext-ai-chat-assistant-for-woocommerce'));
         check_admin_referer('replynextai_test_connection');
         delete_transient('replynextai_status_cache');
+        $authenticated_options = $this->options();
         $status = $this->remote_status(true);
         $success = (bool) $status;
         if ($success && !empty($status['company']['id'])) {
             $options = $this->options();
-            $widget_id = $this->provision_widget($options);
-            if ($widget_id) {
-                $options['company_id'] = (string) absint($status['company']['id']);
-                update_option(self::OPTION_KEY, $options);
+            $same_credentials = hash_equals((string) $authenticated_options['api_token'], (string) $options['api_token']) && hash_equals((string) $authenticated_options['server_url'], (string) $options['server_url']);
+            $widget_id = false;
+            if ($same_credentials) $widget_id = $this->provision_widget($options);
+            $verified_company_id = (string) absint($status['company']['id']);
+            if ($widget_id && '0' !== $verified_company_id && $same_credentials) {
+                if (!$this->save_verified_company($options, $verified_company_id)) {
+                    $success = false;
+                    $this->last_widget_provision_error = 'company_save';
+                }
             } else {
                 $success = false;
             }
@@ -542,11 +551,25 @@ final class ReplyNextAI_Plugin {
             $success = false;
             $this->last_widget_provision_error = 'authorization';
         }
-        $notice = $success ? 'success' : ('revoked' === $this->last_widget_provision_error ? 'widget_revoked' : ($status ? 'widget_error' : 'error'));
+        $notice = $success ? 'success' : ('company_save' === $this->last_widget_provision_error ? 'company_save_error' : ('revoked' === $this->last_widget_provision_error ? 'widget_revoked' : ($status ? 'widget_error' : 'error')));
         $return_page = isset($_POST['return_page']) ? sanitize_key(wp_unslash($_POST['return_page'])) : 'replynextai-connection';
         if (!in_array($return_page, array('replynextai-ai', 'replynextai-connection'), true)) $return_page = 'replynextai-connection';
         wp_safe_redirect(admin_url('admin.php?page=' . $return_page . '&rn_notice=' . $notice));
         exit;
+    }
+
+    /** The ID must come from remote_status(), never request parameters. */
+    private function save_verified_company($options, $company_id) {
+        if (!is_array($options) || !is_string($company_id) || !preg_match('/^[1-9][0-9]*$/D', $company_id)) return false;
+        $options['company_id'] = $company_id;
+        // update_option invokes our registered sanitizer; scope this override
+        // to the server-authenticated write and always restore normal handling.
+        $this->verified_connection_company_id = $company_id;
+        try { update_option(self::OPTION_KEY, $options); }
+        catch (Throwable $ignored) { return false; }
+        finally { $this->verified_connection_company_id = null; }
+        $saved = $this->options();
+        return (string) $saved['company_id'] === $company_id;
     }
 
     public function handle_refresh_widget_connection() {

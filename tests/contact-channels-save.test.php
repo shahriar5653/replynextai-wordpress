@@ -19,6 +19,15 @@ function absint($value) { return abs((int) $value); }
 function sanitize_hex_color($value) { return is_string($value) && preg_match('/^#[0-9a-fA-F]{6}$/', $value) ? $value : null; }
 function __($value) { return $value; }
 function add_settings_error() {}
+function update_option($key, $value) {
+    global $stored_options, $plugin, $simulate_save_failure, $simulate_save_exception;
+    if ($simulate_save_exception) throw new RuntimeException('Simulated storage exception');
+    // WordPress update_option runs the registered settings sanitizer.
+    $sanitized = $plugin->sanitize_options($value);
+    if ($simulate_save_failure) return false;
+    $changed = $stored_options !== $sanitized; $stored_options = $sanitized;
+    return $changed;
+}
 
 require_once __DIR__ . '/../includes/class-replynextai-plugin.php';
 
@@ -30,6 +39,7 @@ function expect_contact_save($condition, $message) {
 }
 
 $plugin = (new ReflectionClass('ReplyNextAI_Plugin'))->newInstanceWithoutConstructor();
+$simulate_save_failure = false; $simulate_save_exception = false;
 $sanitize = new ReflectionMethod('ReplyNextAI_Plugin', 'sanitize_options');
 $sanitize->setAccessible(true);
 
@@ -52,5 +62,22 @@ expect_contact_save('1' === $saved['contact_show_label'], 'rendered launcher sho
 expect_contact_save('1' === $saved['whatsapp_show_label'], 'rendered channel show-label checkbox saves true');
 expect_contact_save('1' === $saved['messenger_show_label'], 'rendered channel show-label checkbox saves true');
 expect_contact_save('1' === $saved['call_show_label'], 'rendered channel show-label checkbox saves true');
+
+$stored_options = array_merge(ReplyNextAI_Plugin::defaults(), array('server_url' => 'https://replynextai.com', 'api_token' => 'private-test-token', 'company_id' => '0', 'ai_enabled' => '1'));
+$method = new ReflectionMethod('ReplyNextAI_Plugin', 'save_verified_company');
+expect_contact_save($method->invoke($plugin, $stored_options, '12'), 'authenticated company binding survives the WordPress option sanitizer');
+expect_contact_save('12' === $stored_options['company_id'] && '1' === $stored_options['ai_enabled'], 'authenticated save preserves company and unrelated settings');
+expect_contact_save($method->invoke($plugin, $stored_options, '12'), 'unchanged already-saved binding remains successful when update_option returns false');
+$form = $plugin->sanitize_options(array_merge($stored_options, array('company_id' => '99')));
+expect_contact_save('12' === $form['company_id'], 'browser-submitted company id cannot alter authenticated binding');
+$simulate_save_failure = true;
+expect_contact_save(!$method->invoke($plugin, $stored_options, '13'), 'failed database write does not report a successful binding');
+$simulate_save_failure = false;
+expect_contact_save(!$method->invoke($plugin, $stored_options, '0'), 'zero is not a verified company');
+$simulate_save_exception = true;
+expect_contact_save(!$method->invoke($plugin, $stored_options, '13'), 'storage exceptions fail safely');
+$simulate_save_exception = false;
+$form = $plugin->sanitize_options(array_merge($stored_options, array('company_id' => '99')));
+expect_contact_save('12' === $form['company_id'], 'exception clears the server-only override');
 
 echo "PASS: Contact Channels save behavior\n";
