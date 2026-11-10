@@ -272,7 +272,9 @@ final class ReplyNextAI_Plugin {
         $include_availability = in_array('availability', $facts, true) || in_array('variants', $facts, true);
         $attributes = array();
         foreach ($product->get_attributes() as $attribute) {
-            $attributes[] = is_object($attribute) && method_exists($attribute, 'get_name') ? sanitize_text_field($attribute->get_name()) : '';
+            if ($product->is_type('variable') && is_object($attribute) && $attribute->get_variation()) {
+                $attributes[] = sanitize_text_field(wc_attribute_label($attribute->get_name()));
+            }
         }
         $variant_ids = $product->is_type('variable') ? array_slice($product->get_children(), 0, 100) : array($product->get_id());
         $variants = array();
@@ -284,8 +286,11 @@ final class ReplyNextAI_Plugin {
                 'title' => sanitize_text_field($variant->get_name()),
                 'selectedOptions' => array(),
             );
-            foreach ((array) $variant->get_attributes() as $name => $value) {
-                $row['selectedOptions'][] = array('name' => sanitize_text_field(str_replace('attribute_', '', (string) $name)), 'value' => sanitize_text_field((string) $value));
+            foreach ($product->is_type('variable') ? (array) $variant->get_attributes() : array() as $name => $value) {
+                if (!is_scalar($value) || '' === (string) $value) continue;
+                $taxonomy = str_replace('attribute_', '', (string) $name);
+                $term = taxonomy_exists($taxonomy) ? get_term_by('slug', (string) $value, $taxonomy) : false;
+                $row['selectedOptions'][] = array('name' => sanitize_text_field(wc_attribute_label($taxonomy)), 'value' => sanitize_text_field($term && !is_wp_error($term) ? $term->name : (string) $value));
             }
             if ($include_price) {
                 $row['price'] = (string) $variant->get_price();
@@ -311,6 +316,7 @@ final class ReplyNextAI_Plugin {
             'externalProductId' => (string) $product->get_id(),
             'title' => sanitize_text_field($product->get_name()),
             'status' => sanitize_text_field($product->get_status()),
+            'productType' => sanitize_text_field($product->get_type()),
             'optionNames' => array_values(array_filter($attributes)),
             'variants' => $variants,
         );
