@@ -6,12 +6,15 @@ function wc_attribute_label($name) { return $name === 'pa_color' ? 'Color' : $na
 function taxonomy_exists($name) { return $name === 'pa_color'; }
 function get_term_by($field, $value, $taxonomy) { return (object) array('name' => 'Red'); }
 function is_wp_error($value) { return false; }
+function strip_shortcodes($value) { return $value; }
+function wp_html_excerpt($value, $length) { return substr(strip_tags($value), 0, $length); }
 require_once __DIR__ . '/../includes/class-replynextai-plugin.php';
 class StockProduct {
     public $quantity = 7; public $managed = true; public $owner = 1; public $id = 1;
     function get_id() { return $this->id; } function get_attributes() { return array(); }
     function is_type($type) { return false; } function get_name() { return 'Shirt'; }
     function get_status() { return 'publish'; } function is_in_stock() { return true; }
+    function get_short_description() { return '<p>Chair description.</p>'; }
     function get_type() { return 'simple'; }
     function is_purchasable() { return true; } function get_stock_managed_by_id() { return $this->owner; }
     function managing_stock() { return $this->managed; } function get_stock_quantity() { return $this->quantity; }
@@ -42,14 +45,18 @@ class VariableStockProduct extends StockProduct {
     function is_type($type) { return $type === 'variable'; }
     function get_type() { return 'variable'; }
     function get_attributes() { return array(new ChoiceAttribute(true), new ChoiceAttribute(false)); }
-    function get_children() { return array(4); }
+    function get_visible_children() { return array(4, 5); }
 }
 class VariationStockProduct extends StockProduct {
+    public $status = 'publish';
+    function get_status() { return $this->status; }
     function get_attributes() { return array('pa_color' => 'red'); }
 }
 $variable = new VariableStockProduct(); $variable->id = 3;
 $variation = new VariationStockProduct(); $variation->id = 4; $variation->owner = 4; $products[4] = $variation;
+$disabled = new VariationStockProduct(); $disabled->id = 5; $disabled->status = 'private'; $products[5] = $disabled;
 $live = $method->invoke($plugin, $variable, 'https://store.example', array('variants'));
 check($live['productType'] === 'variable' && $live['optionNames'] === array('Color'));
 check($live['variants'][0]['selectedOptions'] === array(array('name' => 'Color', 'value' => 'Red')));
+check(count($live['variants']) === 1 && $live['variantsComplete'] === true);
 echo "PASS: live tracked quantity, zero, unknown, invalid and shared-parent stock\n";

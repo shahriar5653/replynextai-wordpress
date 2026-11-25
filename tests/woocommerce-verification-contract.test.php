@@ -9,7 +9,14 @@ function absint($value) { return abs((int) $value); }
 function wp_json_encode($value) { return json_encode($value); }
 function sanitize_text_field($value) { return strip_tags((string) $value); }
 function get_post_type($id) { return $id === 372 ? 'product' : false; }
+function get_post_field($field, $id) { return ''; }
 function wc_get_product($id) { return $id === 372 ? new VerificationProduct() : false; }
+function get_woocommerce_currency() { return 'BDT'; }
+function wc_get_price_decimals() { return 2; }
+function wc_get_price_to_display($product, $args) { return $args['price']; }
+function wc_format_decimal($price, $decimals) { return number_format((float) $price, $decimals, '.', ''); }
+function strip_shortcodes($text) { return str_replace('[test]', '', $text); }
+function wp_html_excerpt($text, $length) { return substr(strip_tags($text), 0, $length); }
 class WP_REST_Response {
     public $data; public $status;
     function __construct($data, $status) { $this->data = $data; $this->status = $status; }
@@ -19,6 +26,7 @@ class VerificationProduct {
     function get_id() { return 372; } function get_type() { return 'simple'; }
     function is_type($type) { return false; } function get_attributes() { return array(); }
     function get_name() { return 'Test Product'; } function get_status() { return 'publish'; }
+    function get_short_description() { return '<p>Storefront description.</p>[test]'; }
     function get_price() { return '123.00'; } function get_regular_price() { return '123.00'; }
     function is_on_sale() { return false; } function is_in_stock() { return true; }
     function is_purchasable() { return true; } function get_stock_managed_by_id() { return 372; }

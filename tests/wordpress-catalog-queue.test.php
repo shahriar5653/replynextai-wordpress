@@ -7,7 +7,7 @@ $checks = array(
     'manual sync reports scheduling outcome' => strpos($source, '$scheduled = $this->queue_catalog_sync(1, true)') !== false,
     'manual sync does not claim success on scheduling failure' => strpos($source, 'Product sync could not be scheduled.') !== false,
     'existing event is recognized' => strpos($source, "wp_next_scheduled('replynextai_deferred_product_sync')") !== false,
-    'stale marker recovery is manual-retry-only' => strpos($source, 'if (!$recover_stale_queue || get_option(self::CATALOG_LOCK_OPTION, false)) return false;') !== false,
+    'only inactive orphaned markers can be recovered manually' => strpos($source, 'if (!$recover_stale_queue || $this->catalog_worker_running() || $this->catalog_queue_claim_pending()) return false;') !== false,
     'cron scheduling failure clears queue marker' => strpos($source, 'delete_option(self::CATALOG_QUEUED_OPTION);') !== false,
 );
 

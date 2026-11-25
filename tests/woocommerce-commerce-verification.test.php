@@ -14,7 +14,8 @@ expect_woo_source(false !== strpos($source, "register_rest_route('replynextai/v1
 expect_woo_source(false !== strpos($source, "hash_hmac('sha256'"), 'live verification authenticates the ReplyNext server with HMAC');
 expect_woo_source(false !== strpos($source, "hash('sha256', \$o['api_token'])"), 'the signing key is derived from the existing connection token and never exposed');
 expect_woo_source(false !== strpos($source, "wc_get_product(\$product_id)"), 'live verification resolves exact WooCommerce products server-side');
-expect_woo_source(false !== strpos($source, "array_slice(\$product->get_children(), 0, 100)"), 'variation results are bounded');
+expect_woo_source(false !== strpos($source, 'get_visible_children()') && false !== strpos($source, 'array_slice($variant_ids, 0, 100)'), 'only bounded visible variation results are returned');
+expect_woo_source(false !== strpos($source, 'get_woocommerce_currency()') && false !== strpos($source, 'wc_get_price_to_display('), 'live prices use native tax-display configuration and store currency');
 expect_woo_source(false !== strpos($source, 'get_stock_managed_by_id'), 'live stock resolves the authoritative parent or variant stock owner');
 expect_woo_source(false !== strpos($source, "'/api/wordpress/products'"), 'legacy product-copy sync remains intact during the transition');
 

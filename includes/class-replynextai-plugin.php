@@ -18,8 +18,11 @@ final class ReplyNextAI_Plugin {
 
     const CATALOG_LOCK_OPTION = 'replynextai_catalog_sync_lock';
     const CATALOG_STATE_TRANSIENT = 'replynextai_catalog_sync_state';
+    const CATALOG_PROGRESS_TRANSIENT = 'replynextai_catalog_sync_progress';
     const CATALOG_DIRTY_TRANSIENT = 'replynextai_catalog_dirty';
     const CATALOG_QUEUED_OPTION = 'replynextai_catalog_sync_queued';
+    const CHAT_PAYMENT_LINKS_OPTION = 'replynextai_chat_payment_links_enabled';
+    const CHAT_PAYMENT_LINKS_WITH_COD_OPTION = 'replynextai_chat_payment_links_with_cod';
     const PROVISION_LOCK_OPTION = 'replynextai_widget_provision_lock';
 
     public static function instance() {
@@ -92,9 +95,15 @@ final class ReplyNextAI_Plugin {
         add_action('admin_post_replynextai_test_connection', array($this, 'handle_test_connection'));
         add_action('admin_post_replynextai_refresh_widget_connection', array($this, 'handle_refresh_widget_connection'));
         add_action('admin_post_replynextai_sync_products', array($this, 'handle_sync_products'));
+        add_action('wp_ajax_replynextai_sync_products', array($this, 'ajax_sync_products'));
+        add_action('wp_ajax_replynextai_sync_products_status', array($this, 'ajax_sync_products_status'));
         add_action('save_post_product', array($this, 'schedule_product_sync'), 20, 3);
         add_action('replynextai_deferred_product_sync', array($this, 'sync_products'));
         add_action('rest_api_init', array($this, 'register_commerce_routes'));
+        add_action('woocommerce_order_status_changed', array($this, 'send_chat_order_status_update'), 10, 3);
+        add_action('woocommerce_payment_complete', array($this, 'send_chat_payment_confirmation'), 10, 1);
+        add_filter('woocommerce_order_actions', array($this, 'add_chat_shipment_action'), 10, 2);
+        add_action('woocommerce_order_action_replynextai_confirm_shipment', array($this, 'confirm_chat_shipment'));
         add_filter('plugin_action_links_' . plugin_basename(REPLYNEXTAI_FILE), array($this, 'plugin_links'));
         add_action('wp_enqueue_scripts', array($this, 'frontend_assets'));
         add_action('wp_footer', array($this, 'render_sitewide_whatsapp'));
@@ -103,8 +112,70 @@ final class ReplyNextAI_Plugin {
         add_shortcode('replynextai_whatsapp', array($this, 'whatsapp_shortcode'));
     }
 
+    public function send_chat_order_status_update($order_id, $previous_status, $status) {
+        if (!in_array($status, array('processing', 'on-hold', 'completed', 'cancelled'), true) || !function_exists('wc_get_order')) return;
+        $this->send_chat_order_event(wc_get_order($order_id), $status);
+    }
+
+    public function send_chat_payment_confirmation($order_id) {
+        if (!function_exists('wc_get_order')) return;
+        $order = wc_get_order($order_id);
+        if (!$order instanceof WC_Order || !$order->is_paid() || !$order->get_date_paid()) return;
+        $this->send_chat_order_event($order, 'paid');
+    }
+
+    private function can_confirm_chat_shipment($order) {
+        return $order instanceof WC_Order
+            && current_user_can('edit_shop_order', $order->get_id())
+            && 'replynext-ai' === $order->get_created_via()
+            && '1' !== $order->get_meta('_replynext_shipment_confirmed')
+            && in_array($order->get_status(), array('processing', 'on-hold', 'completed'), true)
+            && absint($order->get_meta('_replynext_company_id')) === absint($this->options()['company_id']);
+    }
+
+    public function add_chat_shipment_action($actions, $order = null) {
+        if ($this->can_confirm_chat_shipment($order)) {
+            $actions['replynextai_confirm_shipment'] = __('ReplyNext AI: Confirm dispatch and notify customer', 'replynext-ai-chat-assistant-for-woocommerce');
+        }
+        return $actions;
+    }
+
+    public function confirm_chat_shipment($order) {
+        if (!$this->can_confirm_chat_shipment($order)) return;
+        if ($this->send_chat_order_event($order, 'shipped')) {
+            $order->update_meta_data('_replynext_shipment_confirmed', '1');
+            $order->save_meta_data();
+        }
+    }
+
+    private function send_chat_order_event($order, $status) {
+        if (!$order instanceof WC_Order || 'replynext-ai' !== $order->get_created_via()) return false;
+        $options = $this->options();
+        $origin = $this->canonical_origin(home_url());
+        $server = $this->canonical_origin($options['server_url']);
+        $company_id = absint($options['company_id']);
+        if (!$origin || !$server || 0 !== strpos($origin, 'https://') || 0 !== strpos($server, 'https://') || !$company_id || absint($order->get_meta('_replynext_company_id')) !== $company_id || empty($options['api_token'])) return false;
+        $body = wp_json_encode(array('companyId' => $company_id, 'siteUrl' => $origin, 'orderId' => (string) $order->get_id(), 'status' => $status));
+        if (!$body) return;
+        $timestamp = (string) time();
+        $signature = hash_hmac('sha256', $timestamp . '.woocommerce-order-update.' . hash('sha256', $body), hash('sha256', $options['api_token']));
+        $response = wp_safe_remote_post($server . '/api/wordpress/order-update', array(
+            'timeout' => 3, 'redirection' => 0,
+            'headers' => array('Content-Type' => 'application/json', 'X-ReplyNext-Timestamp' => $timestamp, 'X-ReplyNext-Signature' => $signature),
+            'body' => $body,
+        ));
+        return !is_wp_error($response) && 204 === wp_remote_retrieve_response_code($response);
+    }
+
     private function options() {
         return wp_parse_args(get_option(self::OPTION_KEY, array()), self::defaults());
+    }
+
+    private function checkout_options() {
+        return array_merge($this->options(), array(
+            'chat_payment_links_enabled' => get_option(self::CHAT_PAYMENT_LINKS_OPTION, '0'),
+            'chat_payment_links_with_cod' => get_option(self::CHAT_PAYMENT_LINKS_WITH_COD_OPTION, '0'),
+        ));
     }
 
     private function canonical_origin($value) {
@@ -129,6 +200,10 @@ final class ReplyNextAI_Plugin {
             'methods' => 'POST', 'callback' => array($this, 'checkout_quote'),
             'permission_callback' => '__return_true', // Read-only; never creates an order.
         ));
+        register_rest_route('replynextai/v1', '/checkout-options', array(
+            'methods' => 'POST', 'callback' => array($this, 'checkout_live_options'),
+            'permission_callback' => '__return_true', // Read-only, authenticated by its own operation signature.
+        ));
         register_rest_route('replynextai/v1', '/order-billing-recipient', array(
             'methods' => 'POST',
             'callback' => array($this, 'order_billing_recipient'),
@@ -152,17 +227,22 @@ final class ReplyNextAI_Plugin {
 
     public function checkout_create($request) {
         require_once __DIR__ . '/class-replynextai-checkout.php';
-        return ReplyNextAI_Checkout::handle($request, $this->options(), 'checkout-create');
+        return ReplyNextAI_Checkout::handle($request, $this->checkout_options(), 'checkout-create');
     }
 
     public function checkout_requirements($request) {
         require_once __DIR__ . '/class-replynextai-checkout.php';
-        return ReplyNextAI_Checkout::handle($request, $this->options(), 'checkout-requirements');
+        return ReplyNextAI_Checkout::handle($request, $this->checkout_options(), 'checkout-requirements');
     }
 
     public function checkout_quote($request) {
         require_once __DIR__ . '/class-replynextai-checkout.php';
-        return ReplyNextAI_Checkout::handle($request, $this->options(), 'checkout-quote');
+        return ReplyNextAI_Checkout::handle($request, $this->checkout_options(), 'checkout-quote');
+    }
+
+    public function checkout_live_options($request) {
+        require_once __DIR__ . '/class-replynextai-checkout.php';
+        return ReplyNextAI_Checkout::handle($request, $this->checkout_options(), 'checkout-options');
     }
 
     public function order_billing_recipient($request) {
@@ -212,19 +292,31 @@ final class ReplyNextAI_Plugin {
         $timestamp = (string) $request->get_header('x-replynext-timestamp');
         $signature = (string) $request->get_header('x-replynext-signature');
         $site_url = $this->canonical_origin(home_url('/'));
-        if (!$o['api_token'] || !$site_url || !is_array($payload) || !preg_match('/^[0-9]{10}$/D', $timestamp) || abs(time() - (int) $timestamp) > 60 || !isset($payload['companyId'], $payload['siteUrl'], $payload['orderId'], $payload['billingPhone']) || !is_int($payload['companyId']) || absint($o['company_id']) !== $payload['companyId'] || $site_url !== $payload['siteUrl'] || !is_string($payload['orderId']) || !preg_match('/^[1-9][0-9]{0,19}$/D', $payload['orderId']) || !is_string($payload['billingPhone']) || !preg_match('/^[0-9]{7,15}$/D', $payload['billingPhone'])) {
+        $body = $request->get_body();
+        $chat_owned = is_array($payload) && 3 === count($payload) && !array_diff(array_keys($payload), array('companyId', 'siteUrl', 'orderId'));
+        $limited = is_array($payload) && 4 === count($payload) && !array_diff(array_keys($payload), array('companyId', 'siteUrl', 'orderId', 'billingPhone'));
+        if (!$o['api_token'] || !$site_url || 0 !== strpos($site_url, 'https://') || strlen($body) > 4096 || !is_array($payload) || (!$chat_owned && !$limited) || !preg_match('/^[0-9]{10}$/D', $timestamp) || abs(time() - (int) $timestamp) > 60 || !isset($payload['companyId'], $payload['siteUrl'], $payload['orderId']) || !is_int($payload['companyId']) || absint($o['company_id']) !== $payload['companyId'] || $site_url !== $payload['siteUrl'] || !is_string($payload['orderId']) || !preg_match('/^[1-9][0-9]{0,19}$/D', $payload['orderId']) || ($limited && (!isset($payload['billingPhone']) || !is_string($payload['billingPhone']) || !preg_match('/^[0-9]{7,15}$/D', $payload['billingPhone'])))) {
             return new WP_REST_Response(array('success' => false, 'error' => 'Unauthorized order request'), 401);
         }
-        $canonical_payload = array('companyId' => $payload['companyId'], 'siteUrl' => $site_url, 'orderId' => $payload['orderId'], 'billingPhone' => $payload['billingPhone']);
-        $expected = hash_hmac('sha256', $timestamp . '.' . hash('sha256', wp_json_encode($canonical_payload, JSON_UNESCAPED_SLASHES)), hash('sha256', $o['api_token']));
+        if (strlen($payload['orderId']) > strlen((string) PHP_INT_MAX) || (float) $payload['orderId'] > PHP_INT_MAX) {
+            return new WP_REST_Response(array('success' => false, 'error' => 'Unauthorized order request'), 401);
+        }
+        $canonical_payload = array('companyId' => $payload['companyId'], 'siteUrl' => $site_url, 'orderId' => $payload['orderId']);
+        if ($limited) $canonical_payload['billingPhone'] = $payload['billingPhone'];
+        $operation_prefix = $chat_owned ? $timestamp . '.chat-owned-order-status.' : $timestamp . '.';
+        $expected = hash_hmac('sha256', $operation_prefix . hash('sha256', wp_json_encode($canonical_payload, JSON_UNESCAPED_SLASHES)), hash('sha256', $o['api_token']));
         if (!hash_equals($expected, $signature)) return new WP_REST_Response(array('success' => false, 'error' => 'Unauthorized order request'), 401);
         $response = array('success' => true, 'matched' => false);
-        if (function_exists('wc_get_order') && strlen($payload['orderId']) <= strlen((string) PHP_INT_MAX) && (float) $payload['orderId'] <= PHP_INT_MAX) {
+        if (function_exists('wc_get_order')) {
             $order = wc_get_order((int) $payload['orderId']);
             if ($order && is_a($order, 'WC_Order')) {
-                $phone = preg_replace('/[\s()+.\-]/', '', (string) $order->get_billing_phone());
-                // Full normalized match only: never compare last digits or names.
-                if (preg_match('/^[0-9]{7,15}$/D', $phone) && hash_equals($phone, $payload['billingPhone'])) {
+                $phone_matches = false;
+                if ($limited) {
+                    $phone = preg_replace('/[\s()+.\-]/', '', (string) $order->get_billing_phone());
+                    // Legacy limited lookup requires a full normalized phone match.
+                    $phone_matches = (bool) preg_match('/^[0-9]{7,15}$/D', $phone) && hash_equals($phone, $payload['billingPhone']);
+                }
+                if ($chat_owned || $phone_matches) {
                     $status = $order->get_status();
                     if (in_array($status, array('pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed', 'checkout-draft'), true)) $response = array('success' => true, 'matched' => true, 'status' => $status);
                 }
@@ -263,41 +355,50 @@ final class ReplyNextAI_Plugin {
         foreach ($payload['products'] as $requested) {
             $product_id = is_array($requested) && isset($requested['externalProductId']) ? absint($requested['externalProductId']) : 0;
             $product = $product_id ? wc_get_product($product_id) : false;
-            if (!$product || 'product' !== get_post_type($product_id)) continue;
+            if (!$product || 'product' !== get_post_type($product_id) || 'publish' !== $product->get_status() || get_post_field('post_password', $product_id)) continue;
             $products[] = $this->live_woocommerce_product($product, $site_url, $facts);
         }
-        return new WP_REST_Response(array('success' => true, 'products' => $products), 200);
+        $result = new WP_REST_Response(array('success' => true, 'products' => $products), 200);
+        $result->header('Cache-Control', 'no-store, private');
+        return $result;
+    }
+
+    private function live_product_price($product, $price) {
+        return '' === $price || !is_numeric($price) ? '' : wc_format_decimal(wc_get_price_to_display($product, array('price' => $price)), wc_get_price_decimals());
     }
 
     private function live_woocommerce_product($product, $site_url, $facts) {
         $include_price = in_array('price', $facts, true) || in_array('sale_price', $facts, true);
         $include_availability = in_array('availability', $facts, true) || in_array('variants', $facts, true);
+        $currency = $include_price ? (string) get_woocommerce_currency() : '';
+        $is_variable = $product->is_type('variable');
         $attributes = array();
         foreach ($product->get_attributes() as $attribute) {
-            if ($product->is_type('variable') && is_object($attribute) && $attribute->get_variation()) {
-                $attributes[] = sanitize_text_field(wc_attribute_label($attribute->get_name()));
+            if ($is_variable && is_object($attribute) && $attribute->get_variation()) {
+                $attributes[] = sanitize_text_field(wc_attribute_label($attribute->get_name(), $product));
             }
         }
-        $variant_ids = $product->is_type('variable') ? array_slice($product->get_children(), 0, 100) : array($product->get_id());
+        $variant_ids = $is_variable ? $product->get_visible_children() : array($product->get_id());
         $variants = array();
-        foreach ($variant_ids as $variant_id) {
-            $variant = wc_get_product($variant_id);
-            if (!$variant) continue;
+        foreach (array_slice($variant_ids, 0, 100) as $variant_id) {
+            $variant = $is_variable ? wc_get_product($variant_id) : $product;
+            if (!$variant || 'publish' !== $variant->get_status()) continue;
             $row = array(
                 'id' => (string) $variant->get_id(),
                 'title' => sanitize_text_field($variant->get_name()),
                 'selectedOptions' => array(),
             );
-            foreach ($product->is_type('variable') ? (array) $variant->get_attributes() : array() as $name => $value) {
+            foreach ($is_variable ? (array) $variant->get_attributes() : array() as $name => $value) {
                 if (!is_scalar($value) || '' === (string) $value) continue;
                 $taxonomy = str_replace('attribute_', '', (string) $name);
                 $term = taxonomy_exists($taxonomy) ? get_term_by('slug', (string) $value, $taxonomy) : false;
-                $row['selectedOptions'][] = array('name' => sanitize_text_field(wc_attribute_label($taxonomy)), 'value' => sanitize_text_field($term && !is_wp_error($term) ? $term->name : (string) $value));
+                $row['selectedOptions'][] = array('name' => sanitize_text_field(wc_attribute_label($taxonomy, $product)), 'value' => sanitize_text_field($term && !is_wp_error($term) ? $term->name : (string) $value));
             }
             if ($include_price) {
-                $row['price'] = (string) $variant->get_price();
-                $row['regularPrice'] = (string) $variant->get_regular_price();
-                if ($variant->is_on_sale()) $row['salePrice'] = (string) $variant->get_sale_price();
+                $row['price'] = $this->live_product_price($variant, $variant->get_price());
+                $row['regularPrice'] = $this->live_product_price($variant, $variant->get_regular_price());
+                if (preg_match('/^[A-Z]{3}$/D', $currency)) $row['priceCurrencyCode'] = $currency;
+                if ($variant->is_on_sale()) $row['salePrice'] = $this->live_product_price($variant, $variant->get_sale_price());
             }
             if ($include_availability) {
                 $row['availableForSale'] = $variant->is_in_stock() && $variant->is_purchasable();
@@ -319,13 +420,21 @@ final class ReplyNextAI_Plugin {
             'title' => sanitize_text_field($product->get_name()),
             'status' => sanitize_text_field($product->get_status()),
             'productType' => sanitize_text_field($product->get_type()),
+            'description' => trim(wp_html_excerpt(strip_shortcodes($product->get_short_description() ?: $product->get_description()), 1200)),
             'optionNames' => array_values(array_filter($attributes)),
             'variants' => $variants,
+            'variantsComplete' => count($variant_ids) <= 100,
         );
     }
 
     public function register_settings() {
         register_setting('replynextai_group', self::OPTION_KEY, array('sanitize_callback' => array($this, 'sanitize_options')));
+        register_setting('replynextai_woocommerce_group', self::CHAT_PAYMENT_LINKS_OPTION, array('type' => 'string', 'default' => '0', 'sanitize_callback' => array($this, 'sanitize_payment_links_setting')));
+        register_setting('replynextai_woocommerce_group', self::CHAT_PAYMENT_LINKS_WITH_COD_OPTION, array('type' => 'string', 'default' => '0', 'sanitize_callback' => array($this, 'sanitize_payment_links_setting')));
+    }
+
+    public function sanitize_payment_links_setting($value) {
+        return '1' === $value ? '1' : '0';
     }
 
     public function sanitize_options($input) {
@@ -605,27 +714,139 @@ final class ReplyNextAI_Plugin {
 
     public function woocommerce_page() {
         $available = class_exists('WooCommerce');
-        $status = get_transient('replynextai_last_sync');
-        ?><div class="wrap rn-wrap"><?php $this->page_header(__('WooCommerce', 'replynext-ai-chat-assistant-for-woocommerce'), __('Sync products into the ReplyNext AI catalog for accurate recommendations.', 'replynext-ai-chat-assistant-for-woocommerce')); ?><div class="rn-grid rn-grid-form"><div class="rn-card"><span class="rn-status <?php echo $available ? 'is-live' : 'is-off'; ?>"><?php echo $available ? esc_html__('Detected', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Unavailable', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h2><?php esc_html_e('Product catalog sync', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><?php esc_html_e('Syncs up to 100 published WooCommerce products with names, prices, descriptions, categories, links, and images.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php if ($status) : ?><p><strong><?php echo esc_html($status); ?></strong></p><?php endif; ?><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_sync_products" /><?php wp_nonce_field('replynextai_sync_products'); ?><?php submit_button(__('Sync Products Now', 'replynext-ai-chat-assistant-for-woocommerce'), 'primary', 'submit', false, $available ? array() : array('disabled' => 'disabled')); ?></form></div><div class="rn-card"><h2><?php esc_html_e('Automatic updates', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><?php esc_html_e('After a successful connection, product saves schedule a background catalog refresh.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><p><?php esc_html_e('Requirements: WooCommerce active and a valid ReplyNext WordPress token.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p></div></div></div><?php
+        $status = $available ? $this->catalog_sync_view() : array('phase' => 'idle', 'message' => '', 'marker' => '');
+        $busy = $available && in_array($status['phase'], array('queued', 'running'), true);
+        $payment_links = get_option(self::CHAT_PAYMENT_LINKS_OPTION, '0');
+        $payment_links_with_cod = get_option(self::CHAT_PAYMENT_LINKS_WITH_COD_OPTION, '0');
+        ?><div class="wrap rn-wrap">
+            <?php $this->page_header(__('WooCommerce', 'replynext-ai-chat-assistant-for-woocommerce'), __('Manage product discovery and chat checkout for your store.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
+            <div class="rn-grid rn-grid-form">
+                <div class="rn-card" data-rn-catalog-sync data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>" data-phase="<?php echo esc_attr($status['phase']); ?>" data-marker="<?php echo esc_attr($status['marker']); ?>" data-starting="<?php esc_attr_e('Starting product sync…', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-unreachable="<?php esc_attr_e('Could not check sync progress. The job may still be running. Try checking again.', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-waiting="<?php esc_attr_e('The sync is taking longer than expected. Check back for its result.', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-expired="<?php esc_attr_e('Your WordPress session expired. Reload this page before trying again.', 'replynext-ai-chat-assistant-for-woocommerce'); ?>">
+                    <span class="rn-status <?php echo $available ? 'is-live' : 'is-off'; ?>"><?php echo $available ? esc_html__('Detected', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Unavailable', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span>
+                    <h2><?php esc_html_e('Product catalog sync', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
+                    <p><?php esc_html_e('Syncs published WooCommerce products in batches of up to 100, including prices, descriptions, categories, links, and images.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                    <p class="rn-catalog-progress" role="status" aria-live="polite" aria-atomic="true"><span class="rn-catalog-spinner" data-rn-sync-spinner aria-hidden="true" <?php echo $busy ? '' : 'hidden'; ?>></span><strong data-rn-sync-message><?php echo esc_html($status['message']); ?></strong></p>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <input type="hidden" name="action" value="replynextai_sync_products" />
+                        <?php wp_nonce_field('replynextai_sync_products'); ?>
+                        <button type="submit" class="button button-primary" data-rn-sync-submit data-busy-label="<?php esc_attr_e('Syncing products…', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-idle-label="<?php esc_attr_e('Sync Products Now', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-available="<?php echo $available ? '1' : '0'; ?>" <?php disabled(!$available); ?>><?php esc_html_e('Sync Products Now', 'replynext-ai-chat-assistant-for-woocommerce'); ?></button>
+                    </form>
+                </div>
+                <div class="rn-card">
+                    <h2><?php esc_html_e('Automatic updates', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
+                    <p><?php esc_html_e('After a successful connection, product saves schedule a background catalog refresh.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                    <p><?php esc_html_e('Requirements: WooCommerce active and a valid ReplyNext WordPress token.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                </div>
+                <?php if ($available) : ?>
+                    <div class="rn-card">
+                        <h2><?php esc_html_e('Chat payment links', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
+                        <form method="post" action="<?php echo esc_url(admin_url('options.php')); ?>">
+                            <?php settings_fields('replynextai_woocommerce_group'); ?>
+                            <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::CHAT_PAYMENT_LINKS_OPTION); ?>" value="1" <?php checked($payment_links, '1'); ?> /> <?php esc_html_e('Allow order-specific payment links when cash on delivery is disabled', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label>
+                            <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::CHAT_PAYMENT_LINKS_WITH_COD_OPTION); ?>" value="1" <?php checked($payment_links_with_cod, '1'); ?> /> <?php esc_html_e('Also offer payment links if cash on delivery is enabled (requires the setting above)', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label>
+                            <p><?php esc_html_e('Also enable WooCommerce chat checkout in the ReplyNext portal. A supported, confirmed order remains unpaid until the customer pays through WooCommerce. ReplyNext does not collect card details.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                            <?php submit_button(__('Save Checkout Settings', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
+                        </form>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div><?php
     }
 
     public function handle_sync_products() {
         if (!current_user_can('manage_options')) wp_die(esc_html__('Unauthorized', 'replynext-ai-chat-assistant-for-woocommerce'));
         check_admin_referer('replynextai_sync_products');
-        $scheduled = $this->queue_catalog_sync(1, true);
-        set_transient(
-            'replynextai_last_sync',
-            $scheduled
-                ? __('Product synchronization scheduled in the background.', 'replynext-ai-chat-assistant-for-woocommerce')
-                : __('Product sync could not be scheduled. Please try again or ask your site host to check WordPress cron.', 'replynext-ai-chat-assistant-for-woocommerce'),
-            DAY_IN_SECONDS
-        );
-        wp_safe_redirect(admin_url('admin.php?page=replynextai-woocommerce&rn_sync=scheduled'));
+        $this->start_catalog_sync();
+        wp_safe_redirect(admin_url('admin.php?page=replynextai-woocommerce'));
         exit;
     }
 
+    private function authorize_catalog_ajax() {
+        if (!current_user_can('manage_options') || !check_ajax_referer('replynextai_sync_products', '_ajax_nonce', false)) {
+            wp_send_json_error(array('code' => 'sync_access_denied'), 403);
+        }
+    }
+
+    public function ajax_sync_products() {
+        $this->authorize_catalog_ajax();
+        $view = $this->start_catalog_sync();
+        if ('failed' === $view['phase']) wp_send_json_error($view, 409);
+        wp_send_json_success($view);
+    }
+
+    public function ajax_sync_products_status() {
+        $this->authorize_catalog_ajax();
+        $marker = isset($_POST['marker']) && is_string($_POST['marker']) ? sanitize_text_field(wp_unslash($_POST['marker'])) : '';
+        if ('' !== $marker && !wp_is_uuid($marker, 4)) wp_send_json_error(array('code' => 'invalid_sync_marker'), 400);
+        wp_send_json_success($this->catalog_sync_view($marker));
+    }
+
+    private function catalog_worker_running() {
+        $lock = get_option(self::CATALOG_LOCK_OPTION, array());
+        return is_array($lock) && !empty($lock['token']) && (int) ($lock['expires'] ?? 0) >= time();
+    }
+
+    private function catalog_queue_claim_pending() {
+        $mark = get_option(self::CATALOG_QUEUED_OPTION, false);
+        return is_array($mark) && (int) ($mark['claimed_at'] ?? 0) > time() - 15;
+    }
+
+    private function catalog_progress() {
+        $data = get_transient(self::CATALOG_PROGRESS_TRANSIENT);
+        return is_array($data) ? $data : array('phase' => 'idle', 'message' => '', 'marker' => '');
+    }
+
+    private function record_catalog_progress($phase, $message) {
+        $status = array('phase' => $phase, 'message' => $message, 'marker' => wp_generate_uuid4());
+        set_transient(self::CATALOG_PROGRESS_TRANSIENT, $status, DAY_IN_SECONDS);
+        if (in_array($phase, array('completed', 'failed'), true)) set_transient('replynextai_last_sync', $message, DAY_IN_SECONDS);
+        return $status;
+    }
+
+    private function catalog_sync_view($after = null) {
+        $progress = $this->catalog_progress();
+        $done = in_array($progress['phase'], array('completed', 'failed'), true);
+        // The browser that started a sync must see a new result, never the
+        // preceding run's product count. Before following a job, show the last result.
+        if ($done && null !== $after && $progress['marker'] !== $after) return $progress;
+        if ($this->catalog_worker_running()) {
+            return 'running' === $progress['phase'] ? $progress : array('phase' => 'running', 'message' => __('Syncing products…', 'replynext-ai-chat-assistant-for-woocommerce'), 'marker' => $progress['marker']);
+        }
+        $scheduled = wp_next_scheduled('replynextai_deferred_product_sync');
+        if ($scheduled && (int) $scheduled < time() - 90) {
+            return array('phase' => 'failed', 'message' => __('WordPress has not started the queued sync. Ask your host to check WP-Cron, then try again.', 'replynext-ai-chat-assistant-for-woocommerce'), 'marker' => $progress['marker']);
+        }
+        if ($scheduled || $this->catalog_queue_claim_pending()) {
+            return 'queued' === $progress['phase'] ? $progress : array('phase' => 'queued', 'message' => __('Product synchronization scheduled in the background.', 'replynext-ai-chat-assistant-for-woocommerce'), 'marker' => $progress['marker']);
+        }
+        if (in_array($progress['phase'], array('queued', 'running'), true)) {
+            return array('phase' => 'failed', 'message' => __('Sync stopped before it could finish. Please try again.', 'replynext-ai-chat-assistant-for-woocommerce'), 'marker' => $progress['marker']);
+        }
+        if (null !== $after) return array('phase' => 'queued', 'message' => __('Waiting for the current sync result…', 'replynext-ai-chat-assistant-for-woocommerce'), 'marker' => $progress['marker']);
+        if ($done) return $progress;
+        $legacy = get_transient('replynextai_last_sync');
+        return array('phase' => 'idle', 'message' => is_string($legacy) ? $legacy : '', 'marker' => $progress['marker']);
+    }
+
+    private function start_catalog_sync() {
+        $o = $this->options();
+        if (!function_exists('wc_get_products') || !$o['api_token'] || !$o['server_url']) {
+            return $this->record_catalog_progress('failed', __('Connect ReplyNext and activate WooCommerce before syncing products.', 'replynext-ai-chat-assistant-for-woocommerce'));
+        }
+        $marker = $this->catalog_progress()['marker'];
+        $scheduled = true;
+        if (!$this->catalog_worker_running()) $scheduled = $this->queue_catalog_sync(1, true);
+        if (!$scheduled && !$this->catalog_worker_running() && !$this->catalog_queue_claim_pending() && !wp_next_scheduled('replynextai_deferred_product_sync')) {
+            return $this->record_catalog_progress('failed', __('Product sync could not be scheduled. Please try again or ask your site host to check WordPress cron.', 'replynext-ai-chat-assistant-for-woocommerce'));
+        }
+        $view = $this->catalog_sync_view($marker);
+        // Use the pre-click marker for every status request from this browser.
+        $view['marker'] = $marker;
+        return $view;
+    }
+
     public function schedule_product_sync($post_id, $post, $update) {
-        if (wp_is_post_revision($post_id) || 'product' !== $post->post_type || !$update) return;
+        if (wp_is_post_revision($post_id) || 'product' !== $post->post_type || (!$update && 'publish' !== $post->post_status)) return;
         set_transient(self::CATALOG_DIRTY_TRANSIENT, '1', DAY_IN_SECONDS);
         $this->queue_catalog_sync(60);
     }
@@ -634,13 +855,14 @@ final class ReplyNextAI_Plugin {
         // add_option is atomic, preventing save_post/manual requests from
         // enqueueing duplicate workers before WP-Cron observes the event.
         if (wp_next_scheduled('replynextai_deferred_product_sync')) return true;
-        if (!add_option(self::CATALOG_QUEUED_OPTION, '1', '', 'no')) {
+        $claim = array('claimed_at' => time());
+        if (!add_option(self::CATALOG_QUEUED_OPTION, $claim, '', 'no')) {
             // A prior request may have died after setting the queue marker but
             // before the cron event was saved. Only a deliberate admin retry
             // may recover that orphaned marker; product-save workers never do.
-            if (!$recover_stale_queue || get_option(self::CATALOG_LOCK_OPTION, false)) return false;
+            if (!$recover_stale_queue || $this->catalog_worker_running() || $this->catalog_queue_claim_pending()) return false;
             delete_option(self::CATALOG_QUEUED_OPTION);
-            if (!add_option(self::CATALOG_QUEUED_OPTION, '1', '', 'no')) return false;
+            if (!add_option(self::CATALOG_QUEUED_OPTION, $claim, '', 'no')) return false;
         }
         $scheduled = wp_schedule_single_event(time() + max(1, (int) $delay), 'replynextai_deferred_product_sync');
         if (false === $scheduled || is_wp_error($scheduled)) {
@@ -670,28 +892,61 @@ final class ReplyNextAI_Plugin {
         if (is_array($existing) && isset($existing['token']) && hash_equals((string) $existing['token'], (string) $token)) delete_option($option_name);
     }
 
+    private function send_catalog_batch($options, $endpoint, $payload) {
+        $response = wp_remote_post($options['server_url'] . $endpoint, array(
+            'timeout' => 15,
+            'headers' => array('Authorization' => 'Bearer ' . $options['api_token'], 'Content-Type' => 'application/json'),
+            'body' => wp_json_encode($payload),
+        ));
+        if (is_wp_error($response) || 200 !== wp_remote_retrieve_response_code($response)) return null;
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        return is_array($data) && true === ($data['success'] ?? false) ? $data : null;
+    }
+
+    private function retry_catalog_batch($state) {
+        set_transient(self::CATALOG_STATE_TRANSIENT, $state, DAY_IN_SECONDS);
+        $retry = $this->queue_catalog_sync(300);
+        $this->record_catalog_progress('failed', $retry
+            ? __('Product sync did not finish. A background retry is scheduled.', 'replynext-ai-chat-assistant-for-woocommerce')
+            : __('Product sync did not finish. Check your ReplyNext connection and try again.', 'replynext-ai-chat-assistant-for-woocommerce'));
+        return false;
+    }
+
     public function sync_products() {
-        if (!function_exists('wc_get_products')) return false;
-        $o = $this->options();
-        if (!$o['api_token'] || !$o['server_url']) return false;
         $lock_token = $this->acquire_lock(self::CATALOG_LOCK_OPTION, 300);
         if (!$lock_token) {
             $this->queue_catalog_sync(60);
             return false;
         }
         try {
-        delete_option(self::CATALOG_QUEUED_OPTION);
+            delete_option(self::CATALOG_QUEUED_OPTION);
+            return $this->sync_catalog_batch();
+        } catch (Throwable $ignored) {
+            $this->record_catalog_progress('failed', __('Product sync stopped unexpectedly. Please try again.', 'replynext-ai-chat-assistant-for-woocommerce'));
+            return false;
+        } finally {
+            $this->release_lock(self::CATALOG_LOCK_OPTION, $lock_token);
+        }
+    }
+
+    private function sync_catalog_batch() {
+        $o = $this->options();
+        if (!function_exists('wc_get_products') || !$o['api_token'] || !$o['server_url']) {
+            $this->record_catalog_progress('failed', __('Connect ReplyNext and activate WooCommerce before syncing products.', 'replynext-ai-chat-assistant-for-woocommerce'));
+            return false;
+        }
         $state = get_transient(self::CATALOG_STATE_TRANSIENT);
-        if (!is_array($state) || empty($state['sync_id'])) $state = array('sync_id' => wp_generate_uuid4(), 'page' => 1, 'total_synced' => 0, 'index_failed' => false);
+        if (!is_array($state) || empty($state['sync_id']) || !empty($state['index_failed'])) $state = array('sync_id' => wp_generate_uuid4(), 'page' => 1, 'total_synced' => 0);
         delete_transient(self::CATALOG_DIRTY_TRANSIENT);
         $page = max(1, absint($state['page']));
         $sync_id = sanitize_text_field($state['sync_id']);
         $total_synced = absint($state['total_synced']);
-        $index_failed = !empty($state['index_failed']);
+        $this->record_catalog_progress('running', __('Syncing products…', 'replynext-ai-chat-assistant-for-woocommerce'));
         $products = array();
         $index_products = array();
         $batch = wc_get_products(array('status' => 'publish', 'limit' => 100, 'page' => $page, 'paginate' => true, 'return' => 'objects'));
-        $batch_products = is_object($batch) && isset($batch->products) ? $batch->products : array();
+        if (!is_object($batch) || !isset($batch->products) || !is_array($batch->products)) return $this->retry_catalog_batch($state);
+        $batch_products = $batch->products;
         foreach ($batch_products as $product) {
             $image_id = $product->get_image_id();
             $category_names = wp_get_post_terms($product->get_id(), 'product_cat', array('fields' => 'names'));
@@ -722,75 +977,33 @@ final class ReplyNextAI_Plugin {
                 'sourceUpdatedAt' => get_post_modified_time('c', true, $product->get_id()),
             );
         }
-        if (!$products) {
-            $complete = wp_remote_post($o['server_url'] . '/api/wordpress/products', array(
-                'timeout' => 15,
-                'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
-                'body' => wp_json_encode(array('siteUrl' => home_url('/'), 'sync_id' => $sync_id, 'sync_complete' => true, 'products' => array())),
-            ));
-            $index_complete = wp_remote_post($o['server_url'] . '/api/wordpress/catalog', array(
-                'timeout' => 15,
-                'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
-                'body' => wp_json_encode(array('sync_id' => $sync_id, 'sync_complete' => true, 'products' => array())),
-            ));
-            if (is_wp_error($complete) || 200 !== wp_remote_retrieve_response_code($complete) || is_wp_error($index_complete) || 200 !== wp_remote_retrieve_response_code($index_complete)) {
-                set_transient('replynextai_last_sync', __('Last sync failed.', 'replynext-ai-chat-assistant-for-woocommerce'), DAY_IN_SECONDS);
-                set_transient(self::CATALOG_STATE_TRANSIENT, $state, DAY_IN_SECONDS);
-                $this->queue_catalog_sync(300);
+        if ($products) {
+            $body = $this->send_catalog_batch($o, '/api/wordpress/products', array('siteUrl' => home_url('/'), 'sync_id' => $sync_id, 'products' => $products));
+            if (($body['synced'] ?? null) !== count($products)) return $this->retry_catalog_batch($state);
+            $index = $this->send_catalog_batch($o, '/api/wordpress/catalog', array('sync_id' => $sync_id, 'products' => $index_products));
+            // Do not finalize an incomplete index: finalization retires older entries.
+            if (($index['indexed'] ?? null) !== count($index_products)) return $this->retry_catalog_batch($state);
+            $total_synced += $body['synced'];
+        }
+        if (count($batch_products) === 100) {
+            set_transient(self::CATALOG_STATE_TRANSIENT, array('sync_id' => $sync_id, 'page' => $page + 1, 'total_synced' => $total_synced), DAY_IN_SECONDS);
+            if (!$this->queue_catalog_sync(5)) {
+                $this->record_catalog_progress('failed', __('The next product batch could not be scheduled. Try again to continue.', 'replynext-ai-chat-assistant-for-woocommerce'));
                 return false;
             }
-            delete_transient(self::CATALOG_STATE_TRANSIENT);
-            if (get_transient(self::CATALOG_DIRTY_TRANSIENT)) $this->queue_catalog_sync(60);
-            set_transient('replynextai_last_sync', sprintf(__('Last sync completed: %d products.', 'replynext-ai-chat-assistant-for-woocommerce'), $total_synced), DAY_IN_SECONDS);
+            /* translators: %d: number of products synchronized so far. */
+            $this->record_catalog_progress('queued', sprintf(__('Synced %d products so far. Waiting for the next batch…', 'replynext-ai-chat-assistant-for-woocommerce'), $total_synced));
             return true;
         }
-        $response = wp_remote_post($o['server_url'] . '/api/wordpress/products', array(
-            'timeout' => 15,
-            'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
-            'body' => wp_json_encode(array('siteUrl' => home_url('/'), 'sync_id' => $sync_id, 'products' => $products)),
-        ));
-        if (is_wp_error($response) || 200 !== wp_remote_retrieve_response_code($response)) {
-            set_transient('replynextai_last_sync', __('Last sync failed.', 'replynext-ai-chat-assistant-for-woocommerce'), DAY_IN_SECONDS);
-            set_transient(self::CATALOG_STATE_TRANSIENT, array('sync_id' => $sync_id, 'page' => $page, 'total_synced' => $total_synced, 'index_failed' => $index_failed), DAY_IN_SECONDS);
-            $this->queue_catalog_sync(300);
-            return false;
-        }
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        if (empty($body['success'])) { $this->queue_catalog_sync(300); return false; }
-        $index_response = wp_remote_post($o['server_url'] . '/api/wordpress/catalog', array(
-            'timeout' => 15,
-            'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
-            'body' => wp_json_encode(array('sync_id' => $sync_id, 'products' => $index_products)),
-        ));
-        if (is_wp_error($index_response) || 200 !== wp_remote_retrieve_response_code($index_response)) $index_failed = true;
-        $total_synced += absint($body['synced']);
-        if (count($batch_products) === 100) {
-            set_transient(self::CATALOG_STATE_TRANSIENT, array('sync_id' => $sync_id, 'page' => $page + 1, 'total_synced' => $total_synced, 'index_failed' => $index_failed), DAY_IN_SECONDS);
-            $this->queue_catalog_sync(5);
-            return true;
-        }
-        $complete = wp_remote_post($o['server_url'] . '/api/wordpress/products', array(
-            'timeout' => 15,
-            'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
-            'body' => wp_json_encode(array('siteUrl' => home_url('/'), 'sync_id' => $sync_id, 'sync_complete' => true, 'products' => array())),
-        ));
-        if (is_wp_error($complete) || 200 !== wp_remote_retrieve_response_code($complete)) {
-            set_transient('replynextai_last_sync', __('Product sync incomplete; existing products were preserved.', 'replynext-ai-chat-assistant-for-woocommerce'), DAY_IN_SECONDS);
-            return false;
-        }
-        $index_complete = wp_remote_post($o['server_url'] . '/api/wordpress/catalog', array(
-            'timeout' => 15,
-            'headers' => array('Authorization' => 'Bearer ' . $o['api_token'], 'Content-Type' => 'application/json'),
-            'body' => wp_json_encode(array('sync_id' => $sync_id, 'sync_complete' => true, 'products' => array())),
-        ));
-        if (is_wp_error($index_complete) || 200 !== wp_remote_retrieve_response_code($index_complete)) $index_failed = true;
-        /* translators: 1: number of products synchronized, 2: number of batches used. */
-        set_transient('replynextai_last_sync', $index_failed ? __('Product copy sync completed; the discovery index will retry on the next refresh.', 'replynext-ai-chat-assistant-for-woocommerce') : sprintf(__('Last sync completed: %d products.', 'replynext-ai-chat-assistant-for-woocommerce'), $total_synced), DAY_IN_SECONDS);
+        $finished = array('sync_id' => $sync_id, 'sync_complete' => true, 'products' => array());
+        if (!$this->send_catalog_batch($o, '/api/wordpress/products', array('siteUrl' => home_url('/')) + $finished)
+            || !$this->send_catalog_batch($o, '/api/wordpress/catalog', $finished)) return $this->retry_catalog_batch($state);
+        delete_transient(self::CATALOG_STATE_TRANSIENT);
+        if (get_transient(self::CATALOG_DIRTY_TRANSIENT)) $this->queue_catalog_sync(60);
+        /* translators: %d: number of products synchronized. */
+        $this->record_catalog_progress('completed', sprintf(__('Last sync completed: %d products.', 'replynext-ai-chat-assistant-for-woocommerce'), $total_synced));
         delete_transient('replynextai_status_cache');
         return true;
-        } finally {
-            $this->release_lock(self::CATALOG_LOCK_OPTION, $lock_token);
-        }
     }
 
     public function help_page() {
