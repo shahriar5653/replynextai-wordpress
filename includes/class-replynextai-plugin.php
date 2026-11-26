@@ -18,6 +18,7 @@ final class ReplyNextAI_Plugin {
 
     const CATALOG_LOCK_OPTION = 'replynextai_catalog_sync_lock';
     const CATALOG_STATE_TRANSIENT = 'replynextai_catalog_sync_state';
+    const CATALOG_CHECKPOINT_OPTION = 'replynextai_catalog_sync_checkpoint';
     const CATALOG_PROGRESS_TRANSIENT = 'replynextai_catalog_sync_progress';
     const CATALOG_DIRTY_TRANSIENT = 'replynextai_catalog_dirty';
     const CATALOG_QUEUED_OPTION = 'replynextai_catalog_sync_queued';
@@ -97,6 +98,7 @@ final class ReplyNextAI_Plugin {
         add_action('admin_post_replynextai_sync_products', array($this, 'handle_sync_products'));
         add_action('wp_ajax_replynextai_sync_products', array($this, 'ajax_sync_products'));
         add_action('wp_ajax_replynextai_sync_products_status', array($this, 'ajax_sync_products_status'));
+        add_action('wp_ajax_replynextai_sync_products_step', array($this, 'ajax_sync_products_step'));
         add_action('save_post_product', array($this, 'schedule_product_sync'), 20, 3);
         add_action('replynextai_deferred_product_sync', array($this, 'sync_products'));
         add_action('rest_api_init', array($this, 'register_commerce_routes'));
@@ -524,7 +526,7 @@ final class ReplyNextAI_Plugin {
         if (false === strpos($hook, 'replynextai')) return;
         wp_enqueue_media();
         wp_enqueue_style('replynextai-admin', REPLYNEXTAI_URL . 'assets/admin.css', array(), REPLYNEXTAI_VERSION);
-        wp_enqueue_script('replynextai-admin', REPLYNEXTAI_URL . 'assets/admin.js', array(), REPLYNEXTAI_VERSION, true);
+        wp_enqueue_script('replynextai-admin', REPLYNEXTAI_URL . 'assets/admin.js', array(), REPLYNEXTAI_VERSION . '.catalog2', true);
     }
 
     private function page_header($title, $description) {
@@ -756,7 +758,7 @@ final class ReplyNextAI_Plugin {
     public function handle_sync_products() {
         if (!current_user_can('manage_options')) wp_die(esc_html__('Unauthorized', 'replynext-ai-chat-assistant-for-woocommerce'));
         check_admin_referer('replynextai_sync_products');
-        $this->start_catalog_sync();
+        $this->sync_products(true);
         wp_safe_redirect(admin_url('admin.php?page=replynextai-woocommerce'));
         exit;
     }
@@ -769,9 +771,7 @@ final class ReplyNextAI_Plugin {
 
     public function ajax_sync_products() {
         $this->authorize_catalog_ajax();
-        $view = $this->start_catalog_sync();
-        if ('failed' === $view['phase']) wp_send_json_error($view, 409);
-        wp_send_json_success($view);
+        $this->run_catalog_ajax(null);
     }
 
     public function ajax_sync_products_status() {
@@ -779,6 +779,27 @@ final class ReplyNextAI_Plugin {
         $marker = isset($_POST['marker']) && is_string($_POST['marker']) ? sanitize_text_field(wp_unslash($_POST['marker'])) : '';
         if ('' !== $marker && !wp_is_uuid($marker, 4)) wp_send_json_error(array('code' => 'invalid_sync_marker'), 400);
         wp_send_json_success($this->catalog_sync_view($marker));
+    }
+
+    public function ajax_sync_products_step() {
+        $this->authorize_catalog_ajax();
+        $marker = isset($_POST['marker']) && is_string($_POST['marker']) ? sanitize_text_field(wp_unslash($_POST['marker'])) : '';
+        if (!wp_is_uuid($marker, 4)) wp_send_json_error(array('code' => 'invalid_sync_marker'), 400);
+        $this->run_catalog_ajax($marker);
+    }
+
+    private function catalog_checkpoint() {
+        return get_option(self::CATALOG_CHECKPOINT_OPTION, false) ?: get_transient(self::CATALOG_STATE_TRANSIENT);
+    }
+
+    private function run_catalog_ajax($marker) {
+        $this->sync_products(true, $marker);
+        $progress = $this->catalog_progress();
+        if ($this->catalog_worker_running()) {
+            $progress['phase'] = 'running';
+            $progress['message'] = __('Another sync request is finishing. Waiting before continuing…', 'replynext-ai-chat-assistant-for-woocommerce');
+        }
+        wp_send_json_success($progress);
     }
 
     private function catalog_worker_running() {
@@ -812,9 +833,11 @@ final class ReplyNextAI_Plugin {
         if ($this->catalog_worker_running()) {
             return 'running' === $progress['phase'] ? $progress : array('phase' => 'running', 'message' => __('Syncing products…', 'replynext-ai-chat-assistant-for-woocommerce'), 'marker' => $progress['marker']);
         }
+        if ($this->catalog_checkpoint() && in_array($progress['phase'], array('queued', 'running'), true)) return $progress;
+        if ('' === $after && $done) return $progress;
         $scheduled = wp_next_scheduled('replynextai_deferred_product_sync');
         if ($scheduled && (int) $scheduled < time() - 90) {
-            return array('phase' => 'failed', 'message' => __('WordPress has not started the queued sync. Ask your host to check WP-Cron, then try again.', 'replynext-ai-chat-assistant-for-woocommerce'), 'marker' => $progress['marker']);
+            return array('phase' => 'failed', 'message' => __('The background sync has not started. Click Sync Products Now to process it directly.', 'replynext-ai-chat-assistant-for-woocommerce'), 'marker' => $progress['marker']);
         }
         if ($scheduled || $this->catalog_queue_claim_pending()) {
             return 'queued' === $progress['phase'] ? $progress : array('phase' => 'queued', 'message' => __('Product synchronization scheduled in the background.', 'replynext-ai-chat-assistant-for-woocommerce'), 'marker' => $progress['marker']);
@@ -826,23 +849,6 @@ final class ReplyNextAI_Plugin {
         if ($done) return $progress;
         $legacy = get_transient('replynextai_last_sync');
         return array('phase' => 'idle', 'message' => is_string($legacy) ? $legacy : '', 'marker' => $progress['marker']);
-    }
-
-    private function start_catalog_sync() {
-        $o = $this->options();
-        if (!function_exists('wc_get_products') || !$o['api_token'] || !$o['server_url']) {
-            return $this->record_catalog_progress('failed', __('Connect ReplyNext and activate WooCommerce before syncing products.', 'replynext-ai-chat-assistant-for-woocommerce'));
-        }
-        $marker = $this->catalog_progress()['marker'];
-        $scheduled = true;
-        if (!$this->catalog_worker_running()) $scheduled = $this->queue_catalog_sync(1, true);
-        if (!$scheduled && !$this->catalog_worker_running() && !$this->catalog_queue_claim_pending() && !wp_next_scheduled('replynextai_deferred_product_sync')) {
-            return $this->record_catalog_progress('failed', __('Product sync could not be scheduled. Please try again or ask your site host to check WordPress cron.', 'replynext-ai-chat-assistant-for-woocommerce'));
-        }
-        $view = $this->catalog_sync_view($marker);
-        // Use the pre-click marker for every status request from this browser.
-        $view['marker'] = $marker;
-        return $view;
     }
 
     public function schedule_product_sync($post_id, $post, $update) {
@@ -903,8 +909,15 @@ final class ReplyNextAI_Plugin {
         return is_array($data) && true === ($data['success'] ?? false) ? $data : null;
     }
 
-    private function retry_catalog_batch($state) {
-        set_transient(self::CATALOG_STATE_TRANSIENT, $state, DAY_IN_SECONDS);
+    private function retry_catalog_batch($state, $manual) {
+        $state['attempts'] = 1 + (int) ($state['attempts'] ?? 0);
+        update_option(self::CATALOG_CHECKPOINT_OPTION, $state, false);
+        if ($manual) {
+            $this->record_catalog_progress($state['attempts'] < 3 ? 'queued' : 'failed', $state['attempts'] < 3
+                ? __('Batch not confirmed. Retrying from the saved position…', 'replynext-ai-chat-assistant-for-woocommerce')
+                : __('ReplyNext did not confirm the batch. Check the plugin connection and your host’s outbound HTTPS, then click Sync Products Now to resume.', 'replynext-ai-chat-assistant-for-woocommerce'));
+            return false;
+        }
         $retry = $this->queue_catalog_sync(300);
         $this->record_catalog_progress('failed', $retry
             ? __('Product sync did not finish. A background retry is scheduled.', 'replynext-ai-chat-assistant-for-woocommerce')
@@ -912,40 +925,80 @@ final class ReplyNextAI_Plugin {
         return false;
     }
 
-    public function sync_products() {
-        $lock_token = $this->acquire_lock(self::CATALOG_LOCK_OPTION, 300);
+    public function sync_products($manual = false, $marker = null) {
+        $lock_token = $this->acquire_catalog_lock();
         if (!$lock_token) {
-            $this->queue_catalog_sync(60);
+            if (!$manual) $this->queue_catalog_sync(60);
             return false;
         }
         try {
-            delete_option(self::CATALOG_QUEUED_OPTION);
-            return $this->sync_catalog_batch();
+            $progress = $this->catalog_progress();
+            if ($manual && null !== $marker && ($marker !== $progress['marker'] || in_array($progress['phase'], array('completed', 'failed'), true))) return true;
+            if (!$manual) delete_option(self::CATALOG_QUEUED_OPTION);
+            return $this->sync_catalog_batch($manual, $manual && null === $marker);
         } catch (Throwable $ignored) {
             $this->record_catalog_progress('failed', __('Product sync stopped unexpectedly. Please try again.', 'replynext-ai-chat-assistant-for-woocommerce'));
             return false;
         } finally {
-            $this->release_lock(self::CATALOG_LOCK_OPTION, $lock_token);
+            $this->release_catalog_lock($lock_token);
         }
     }
 
-    private function sync_catalog_batch() {
+    private function acquire_catalog_lock() {
+        global $wpdb;
+        $token = wp_generate_uuid4();
+        $lock = array('token' => $token, 'expires' => time() + 300);
+        if (1 === $wpdb->query($wpdb->prepare("INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')", self::CATALOG_LOCK_OPTION, maybe_serialize($lock)))) {
+            wp_cache_delete(self::CATALOG_LOCK_OPTION, 'options');
+            wp_cache_delete('notoptions', 'options');
+            return $token;
+        }
+        $previous = get_option(self::CATALOG_LOCK_OPTION);
+        if (!is_array($previous) || (int) ($previous['expires'] ?? 0) >= time()) return '';
+        return $this->replace_catalog_lock($previous, $lock) ? $token : '';
+    }
+
+    private function release_catalog_lock($token) {
+        $previous = get_option(self::CATALOG_LOCK_OPTION);
+        if (is_array($previous) && ($previous['token'] ?? '') === $token) $this->replace_catalog_lock($previous, array());
+    }
+
+    private function replace_catalog_lock($expected, $replacement) {
+        global $wpdb;
+        if (!$replacement) {
+            $changed = $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name=%s AND BINARY option_value=BINARY %s", self::CATALOG_LOCK_OPTION, maybe_serialize($expected)));
+        } else {
+            $changed = $wpdb->query($wpdb->prepare("UPDATE {$wpdb->options} SET option_value=%s WHERE option_name=%s AND BINARY option_value=BINARY %s", maybe_serialize($replacement), self::CATALOG_LOCK_OPTION, maybe_serialize($expected)));
+        }
+        wp_cache_delete(self::CATALOG_LOCK_OPTION, 'options');
+        wp_cache_delete('notoptions', 'options');
+        return 1 === $changed;
+    }
+
+    private function sync_catalog_batch($manual = false, $restart = false) {
         $o = $this->options();
         if (!function_exists('wc_get_products') || !$o['api_token'] || !$o['server_url']) {
             $this->record_catalog_progress('failed', __('Connect ReplyNext and activate WooCommerce before syncing products.', 'replynext-ai-chat-assistant-for-woocommerce'));
             return false;
         }
-        $state = get_transient(self::CATALOG_STATE_TRANSIENT);
-        if (!is_array($state) || empty($state['sync_id']) || !empty($state['index_failed'])) $state = array('sync_id' => wp_generate_uuid4(), 'page' => 1, 'total_synced' => 0);
-        delete_transient(self::CATALOG_DIRTY_TRANSIENT);
+        $state = $this->catalog_checkpoint();
+        $binding = hash('sha256', wp_json_encode(array(home_url('/'), $o['server_url'], $o['api_token'])));
+        if (!is_array($state) || empty($state['sync_id']) || ($state['binding'] ?? '') !== $binding) $state = array('sync_id' => wp_generate_uuid4(), 'page' => 1, 'total_synced' => 0, 'binding' => $binding);
+        if ($restart) $state['attempts'] = 0;
+        if (1 === (int) $state['page'] && empty($state['started'])) {
+            delete_transient(self::CATALOG_DIRTY_TRANSIENT);
+            $state['started'] = true;
+        }
+        update_option(self::CATALOG_CHECKPOINT_OPTION, $state, false);
         $page = max(1, absint($state['page']));
         $sync_id = sanitize_text_field($state['sync_id']);
         $total_synced = absint($state['total_synced']);
         $this->record_catalog_progress('running', __('Syncing products…', 'replynext-ai-chat-assistant-for-woocommerce'));
+        if (!empty($state['finalizing'])) return $this->finish_catalog_sync($o, $state, $manual);
         $products = array();
         $index_products = array();
-        $batch = wc_get_products(array('status' => 'publish', 'limit' => 100, 'page' => $page, 'paginate' => true, 'return' => 'objects'));
-        if (!is_object($batch) || !isset($batch->products) || !is_array($batch->products)) return $this->retry_catalog_batch($state);
+        $batch = wc_get_products(array('status' => 'publish', 'limit' => 100, 'page' => $page, 'orderby' => 'ID', 'order' => 'ASC', 'paginate' => true, 'return' => 'objects'));
+        if (!is_object($batch) || !isset($batch->products) || !is_array($batch->products)) return $this->retry_catalog_batch($state, $manual);
         $batch_products = $batch->products;
         foreach ($batch_products as $product) {
             $image_id = $product->get_image_id();
@@ -979,15 +1032,15 @@ final class ReplyNextAI_Plugin {
         }
         if ($products) {
             $body = $this->send_catalog_batch($o, '/api/wordpress/products', array('siteUrl' => home_url('/'), 'sync_id' => $sync_id, 'products' => $products));
-            if (($body['synced'] ?? null) !== count($products)) return $this->retry_catalog_batch($state);
+            if (($body['synced'] ?? null) !== count($products)) return $this->retry_catalog_batch($state, $manual);
             $index = $this->send_catalog_batch($o, '/api/wordpress/catalog', array('sync_id' => $sync_id, 'products' => $index_products));
             // Do not finalize an incomplete index: finalization retires older entries.
-            if (($index['indexed'] ?? null) !== count($index_products)) return $this->retry_catalog_batch($state);
+            if (($index['indexed'] ?? null) !== count($index_products)) return $this->retry_catalog_batch($state, $manual);
             $total_synced += $body['synced'];
         }
-        if (count($batch_products) === 100) {
-            set_transient(self::CATALOG_STATE_TRANSIENT, array('sync_id' => $sync_id, 'page' => $page + 1, 'total_synced' => $total_synced), DAY_IN_SECONDS);
-            if (!$this->queue_catalog_sync(5)) {
+        if (count($batch_products) === 100 || ($manual && $products)) {
+            update_option(self::CATALOG_CHECKPOINT_OPTION, array('sync_id' => $sync_id, 'page' => $page + 1, 'total_synced' => $total_synced, 'started' => true, 'binding' => $binding, 'finalizing' => count($batch_products) < 100), false);
+            if (!$manual && !$this->queue_catalog_sync(5)) {
                 $this->record_catalog_progress('failed', __('The next product batch could not be scheduled. Try again to continue.', 'replynext-ai-chat-assistant-for-woocommerce'));
                 return false;
             }
@@ -995,13 +1048,21 @@ final class ReplyNextAI_Plugin {
             $this->record_catalog_progress('queued', sprintf(__('Synced %d products so far. Waiting for the next batch…', 'replynext-ai-chat-assistant-for-woocommerce'), $total_synced));
             return true;
         }
-        $finished = array('sync_id' => $sync_id, 'sync_complete' => true, 'products' => array());
+        $state['total_synced'] = $total_synced;
+        $state['finalizing'] = true;
+        update_option(self::CATALOG_CHECKPOINT_OPTION, $state, false);
+        return $this->finish_catalog_sync($o, $state, $manual);
+    }
+
+    private function finish_catalog_sync($o, $state, $manual) {
+        $finished = array('sync_id' => $state['sync_id'], 'sync_complete' => true, 'products' => array());
         if (!$this->send_catalog_batch($o, '/api/wordpress/products', array('siteUrl' => home_url('/')) + $finished)
-            || !$this->send_catalog_batch($o, '/api/wordpress/catalog', $finished)) return $this->retry_catalog_batch($state);
+            || !$this->send_catalog_batch($o, '/api/wordpress/catalog', $finished)) return $this->retry_catalog_batch($state, $manual);
+        delete_option(self::CATALOG_CHECKPOINT_OPTION);
         delete_transient(self::CATALOG_STATE_TRANSIENT);
         if (get_transient(self::CATALOG_DIRTY_TRANSIENT)) $this->queue_catalog_sync(60);
         /* translators: %d: number of products synchronized. */
-        $this->record_catalog_progress('completed', sprintf(__('Last sync completed: %d products.', 'replynext-ai-chat-assistant-for-woocommerce'), $total_synced));
+        $this->record_catalog_progress('completed', sprintf(__('Last sync completed: %d products.', 'replynext-ai-chat-assistant-for-woocommerce'), $state['total_synced']));
         delete_transient('replynextai_status_cache');
         return true;
     }

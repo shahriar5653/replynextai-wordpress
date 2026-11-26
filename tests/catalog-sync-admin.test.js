@@ -47,7 +47,7 @@ test('sync stays in the card, disables duplicate starts and displays the new cou
   await ui.tick();
   assert.equal(ui.label.textContent, 'Syncing');
   assert.equal(ui.calls[1].params.marker, 'before');
-  assert.equal(ui.calls[1].params.action, 'replynextai_sync_products_status');
+  assert.equal(ui.calls[1].params.action, 'replynextai_sync_products_step');
   assert.equal(ui.calls[1].params._ajax_nonce, 'local-test-nonce');
   assert.equal(ui.calls[1].options.credentials, 'same-origin');
   await ui.tick();
@@ -57,14 +57,31 @@ test('sync stays in the card, disables duplicate starts and displays the new cou
   assert.equal(ui.timers.size, 0);
 });
 
-test('opening an active card follows status without scheduling a new job', async () => {
+test('opening an active card resumes the job without submitting a new start', async () => {
   const ui = adminFixture([{ phase: 'failed', status: 403 }], 'running');
   assert.equal(ui.spinner.hidden, false);
   await ui.tick();
-  assert.equal(ui.calls[0].params.action, 'replynextai_sync_products_status');
+  assert.equal(ui.calls[0].params.action, 'replynextai_sync_products_step');
   assert.equal(ui.label.textContent, 'Session expired');
   assert.equal(ui.button.disabled, false);
   assert.equal(ui.timers.size, 0);
+});
+
+test('lost start response recovers through status before running another batch', async () => {
+  const ui = adminFixture([
+    new Error('timeout'),
+    { phase: 'queued', message: 'Not observed yet', marker: 'before' },
+    { phase: 'queued', message: '100 synced', marker: 'batch-one' },
+    { phase: 'completed', message: '101 synced', marker: 'done' },
+  ]);
+  await ui.click();
+  await ui.tick(); await ui.tick(); await ui.tick();
+  assert.deepEqual(ui.calls.map(call => call.params.action), [
+    'replynextai_sync_products', 'replynextai_sync_products_status',
+    'replynextai_sync_products_status', 'replynextai_sync_products_step',
+  ]);
+  assert.equal(ui.calls[3].params.marker, 'batch-one');
+  assert.equal(ui.label.textContent, '101 synced');
 });
 
 test('network failures stop the loader without claiming completion or repeating the start', async () => {

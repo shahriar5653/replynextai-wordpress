@@ -16,6 +16,7 @@
     var timer;
     var failures = 0;
     var startedAt = 0;
+    var recoveringStart = false;
     var isPending = function (phase) { return phase === 'queued' || phase === 'running'; };
 
     function render(phase, message) {
@@ -32,7 +33,7 @@
       var params = new URLSearchParams({ action: action, _ajax_nonce: nonce.value });
       if (watchMarker !== undefined) params.set('marker', watchMarker);
       var controller = window.AbortController ? new AbortController() : null;
-      var timeout = controller && setTimeout(function () { controller.abort(); }, 12000);
+      var timeout = controller && setTimeout(function () { controller.abort(); }, 75000);
       try {
         var response = await fetch(card.dataset.ajaxUrl, { method: 'POST', body: params, credentials: 'same-origin', mode: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller ? controller.signal : undefined });
         if (response.status === 401 || response.status === 403) return { phase: 'failed', message: card.dataset.expired };
@@ -51,10 +52,13 @@
           return;
         }
         try {
-          var result = await request('replynextai_sync_products_status', marker);
+          var result = await request(marker && !recoveringStart ? 'replynextai_sync_products_step' : 'replynextai_sync_products_status', marker);
+          if (recoveringStart && result.marker === marker) throw new Error('Start not yet confirmed');
+          recoveringStart = false;
+          marker = result.marker || marker;
           failures = 0;
           render(result.phase, result.message);
-          if (busy) follow(3000);
+          if (busy) follow(result.phase === 'running' ? 4000 : 1500);
         } catch (error) {
           if (++failures < 3) follow(4000);
           else render('failed', card.dataset.unreachable);
@@ -67,6 +71,7 @@
       if (busy) return;
       startedAt = Date.now();
       failures = 0;
+      recoveringStart = false;
       render('queued', card.dataset.starting);
       try {
         var result = await request('replynextai_sync_products');
@@ -74,9 +79,9 @@
         render(result.phase, result.message);
         if (busy) follow(1600);
       } catch (error) {
-        // The server may have accepted the enqueue before the browser timed
-        // out. Do not submit a second start request automatically.
-        render('failed', card.dataset.unreachable);
+        // Recover the server's checkpoint without initiating another run.
+        recoveringStart = true;
+        follow(4000);
       }
     });
 

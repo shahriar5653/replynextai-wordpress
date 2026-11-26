@@ -6,12 +6,12 @@
 $source = file_get_contents(dirname(__DIR__) . '/includes/class-replynextai-plugin.php');
 $checks = array(
     'catalog execution lock' => strpos($source, "CATALOG_LOCK_OPTION") !== false,
-    'catalog lock release' => strpos($source, "release_lock(self::CATALOG_LOCK_OPTION") !== false,
+    'catalog lock release' => strpos($source, 'release_catalog_lock($lock_token)') !== false,
     'atomic queue marker' => strpos($source, "CATALOG_QUEUED_OPTION") !== false && strpos($source, "add_option(self::CATALOG_QUEUED_OPTION") !== false,
     'dirty flag' => strpos($source, "CATALOG_DIRTY_TRANSIENT") !== false,
     'bounded product page' => strpos($source, "'limit' => 100") !== false,
     'continuation queue' => strpos($source, "queue_catalog_sync(5)") !== false,
-    'manual sync is queued' => strpos($source, "Product synchronization scheduled in the background.") !== false,
+    'manual sync runs independently of cron' => strpos($source, '$this->sync_products(true, $marker)') !== false,
     'short catalog timeout' => strpos($source, "'timeout' => 15") !== false,
     'legacy products endpoint retained' => strpos($source, "'/api/wordpress/products'") !== false,
     'catalog endpoint retained' => strpos($source, "'/api/wordpress/catalog'") !== false,

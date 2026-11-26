@@ -20,6 +20,27 @@ function __($message, $domain) { return $message; }
 function get_option($key, $default = false) { global $options; return $options[$key] ?? $default; }
 function add_option($key, $value, $unused, $autoload) { global $options; if (isset($options[$key])) return false; $options[$key] = $value; return true; }
 function delete_option($key) { global $options; unset($options[$key]); }
+function update_option($key, $value, $autoload = null) { global $options; $options[$key] = $value; }
+function maybe_serialize($value) { return serialize($value); }
+function wp_cache_delete($key, $group) {}
+class CatalogTestDb {
+    public $options = 'wp_options';
+    public function prepare($sql, ...$args) { return array($sql, $args); }
+    public function query($query) {
+        global $options;
+        list($sql, $args) = $query;
+        if (0 === strpos($sql, 'INSERT')) return add_option($args[0], unserialize($args[1]), '', 'no') ? 1 : 0;
+        if (0 === strpos($sql, 'DELETE')) {
+            if (serialize($options[$args[0]] ?? null) !== $args[1]) return 0;
+            delete_option($args[0]);
+        } else {
+            if (serialize($options[$args[1]] ?? null) !== $args[2]) return 0;
+            update_option($args[1], unserialize($args[0]));
+        }
+        return 1;
+    }
+}
+$wpdb = new CatalogTestDb();
 function get_transient($key) { global $transients; return $transients[$key] ?? false; }
 function set_transient($key, $value, $ttl) { global $transients; $transients[$key] = $value; return true; }
 function delete_transient($key) { global $transients; unset($transients[$key]); }
@@ -94,35 +115,42 @@ $allowed = true; $nonce_ok = false;
 sync_assert(call_catalog_ajax($status)->status === 403, 'polling requires the action nonce and capability');
 $nonce_ok = true;
 
-$previous = wp_generate_uuid4();
-$transients[$progress_key] = array('phase' => 'completed', 'message' => 'Last sync completed: 12 products.', 'marker' => $previous);
-$accepted = call_catalog_ajax($start)->body;
-sync_assert($accepted['phase'] === 'queued' && $accepted['marker'] === $previous && strpos($accepted['message'], '12 products') === false, 'enqueue never reports an earlier result');
-call_catalog_ajax($start);
-sync_assert($schedule_calls === 1 && !$requests, 'a second click attaches to the queued sync; AJAX does not perform the batch');
-$_POST = array('marker' => $previous);
-sync_assert(call_catalog_ajax($status)->body['phase'] === 'queued', 'waiting for current job');
-sync_assert(tick_catalog(), 'first batch succeeds');
-$part = call_catalog_ajax($status)->body;
-sync_assert($part['phase'] === 'queued' && strpos($part['message'], '100 products so far') !== false && $reads === array('running'), 'status reports running and continues polling after a batch');
-sync_assert(!isset($requests[0][1]['sync_complete']) && count($requests) === 2, 'not finalized after an intermediate batch');
-sync_assert(tick_catalog(), 'last batch succeeds');
-$current = call_catalog_ajax($status)->body;
-sync_assert($current['phase'] === 'completed' && $current['marker'] !== $previous && $current['message'] === 'Last sync completed: 101 products.', 'result and total belong to the new run');
-
-$old_result = $current['marker']; $requests = array(); $fail_index = true;
-call_catalog_ajax($start);
-$_POST['marker'] = $old_result;
-sync_assert(!tick_catalog(), 'index failure is not success');
-$failure = call_catalog_ajax($status)->body;
-sync_assert($failure['phase'] === 'failed' && strpos($failure['message'], 'retry is scheduled') !== false, 'shows error even when a background retry is queued');
-sync_assert(count($requests) === 2 && !isset($requests[1][1]['sync_complete']), 'failed index is not finalized');
-
+$step = array($plugin, 'ajax_sync_products_step');
+$checkpoint = ReplyNextAI_Plugin::CATALOG_CHECKPOINT_OPTION;
+$schedule_fails = true;
 $scheduled = time() - 100;
-$_POST['marker'] = $failure['marker'];
-sync_assert(strpos(call_catalog_ajax($status)->body['message'], 'WP-Cron') !== false, 'overdue cron stops indefinite loading and explains the problem');
-$scheduled = false; $schedule_fails = true;
-$options[ReplyNextAI_Plugin::CATALOG_QUEUED_OPTION] = array('claimed_at' => time() - 30);
-$options[ReplyNextAI_Plugin::CATALOG_LOCK_OPTION] = array('token' => 'expired', 'expires' => time() - 30);
-sync_assert(call_catalog_ajax($start)->status === 409 && !isset($options[ReplyNextAI_Plugin::CATALOG_QUEUED_OPTION]), 'a dead worker does not hide a real scheduling failure');
-echo "PASS: authentic AJAX, no duplicate queues, live batch status, new result count, and safe failure handling\n";
+sync_assert(strpos(call_catalog_ajax($status)->body['message'], 'has not started') !== false, 'overdue background job can be bypassed');
+$part = call_catalog_ajax($start)->body;
+sync_assert($part['phase'] === 'queued' && strpos($part['message'], '100 products so far') !== false && $reads === array('running'), 'manual AJAX runs first 100 despite unavailable cron');
+sync_assert($schedule_calls === 0 && count($requests) === 2, 'no cron needed and no early completion');
+$sync_id = $requests[0][1]['sync_id'];
+$_POST = array('marker' => $part['marker']);
+$options[ReplyNextAI_Plugin::CATALOG_LOCK_OPTION] = array('token' => 'other', 'expires' => time() + 300);
+sync_assert(call_catalog_ajax($step)->body['phase'] === 'running' && count($requests) === 2, 'live worker excludes overlapping tab');
+$options[ReplyNextAI_Plugin::CATALOG_LOCK_OPTION]['expires'] = time() - 1;
+$fail_index = true;
+$retry = call_catalog_ajax($step)->body;
+sync_assert($retry['phase'] === 'queued' && $options[$checkpoint]['page'] === 2, 'expired lock recovered and failed batch remains resumable');
+sync_assert(call_catalog_ajax($step)->body['marker'] === $retry['marker'] && count($requests) === 4, 'stale step does not repeat requests');
+for ($i = 0; $i < 2; $i++) {
+    $_POST['marker'] = $retry['marker'];
+    $retry = call_catalog_ajax($step)->body;
+}
+sync_assert($retry['phase'] === 'failed' && isset($options[$checkpoint]), 'retry cap retains checkpoint');
+$fail_index = false;
+$last_batch = call_catalog_ajax($start)->body;
+sync_assert($last_batch['phase'] === 'queued' && $options[$checkpoint]['finalizing'], 'manual finalization gets its own request');
+$_POST['marker'] = $last_batch['marker'];
+$current = call_catalog_ajax($step)->body;
+sync_assert($current['phase'] === 'completed' && $current['message'] === 'Last sync completed: 101 products.', 'retry click resumes and finalizes exact total');
+foreach ($requests as $entry) sync_assert($entry[1]['sync_id'] === $sync_id, 'all batch retries and finalization share sync id');
+sync_assert(!isset($options[$checkpoint]), 'completion clears checkpoint');
+$count = count($requests);
+$_POST['marker'] = $current['marker'];
+call_catalog_ajax($step);
+sync_assert(count($requests) === $count, 'late duplicate cannot restart a completed run');
+$schedule_fails = false;
+$scheduled = false;
+sync_assert(tick_catalog() && $scheduled && $schedule_calls === 1, 'automatic worker still schedules next batch');
+sync_assert(tick_catalog() && call_catalog_ajax($status)->body['phase'] === 'completed', 'automatic worker can complete');
+echo "PASS: manual and cron lifecycles, authentication, lock recovery, idempotent replay, retry and completion\n";
