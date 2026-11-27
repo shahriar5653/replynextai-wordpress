@@ -4,7 +4,7 @@ Tags: live chat, ai chatbot, customer support, woocommerce, whatsapp
 Requires at least: 6.0
 Tested up to: 7.1.5
 Requires PHP: 7.4
-Stable tag: 1.4.7
+Stable tag: 1.4.8
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,10 @@ extensions use the store's native checkout. Enable the desired payment-link
 options under ReplyNext AI > WooCommerce.
 
 == Changelog ==
+
+= 1.4.8 =
+* Keep AI chat configuration separate from JavaScript bundles so cache optimization does not strip the widget ID.
+* Exclude only the AI chat loader from LiteSpeed's JavaScript combination and delay. After updating, clear any existing page and JavaScript caches once.
 
 = 1.4.7 =
 * Refresh the WordPress dashboard and organize the AI chat, contact channels, catalog, and display-rule settings.

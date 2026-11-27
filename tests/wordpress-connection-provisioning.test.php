@@ -16,7 +16,7 @@ expect_source(false !== strpos($source, "'widget_error'"), 'provisioning failure
 expect_source(false !== strpos($source, "'WORDPRESS_WIDGET_REVOKED'"), 'reported revoked widget registrations fail closed');
 expect_source(false !== strpos($source, "if (!\$widget_id) \$widget_id = \$this->provision_widget(\$config);"), 'frontend recovery provisioning remains available');
 expect_source(false !== strpos($source, "if ('1' === \$o['ai_enabled'] && '1' === \$o['ai_sitewide']) \$this->enqueue_ai(\$o);"), 'AI chat remains separately gated by existing display settings');
-expect_source(false !== strpos($source, 'data-widget-id'), 'frontend emits only the opaque widget ID');
+expect_source(false !== strpos($source, "'widgetId' => \$widget_id"), 'frontend configuration carries the opaque widget ID');
 expect_source(false === strpos($source, 'data-company-id'), 'no browser company ID authority is emitted');
 expect_source(false !== strpos($source, "\$this->field('server_url'"), 'AI Website Chat settings expose the configured server URL');
 expect_source(false !== strpos($source, 'id="rn-ai-token" type="password"'), 'AI Website Chat settings expose the secure connection token field');

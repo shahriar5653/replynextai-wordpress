@@ -8,6 +8,7 @@ final class ReplyNextAI_Plugin {
     const OPTION_KEY = 'replynextai_options';
     const LEGACY_OPTION_KEY = 'replynextai_chat_options';
     const AI_HANDLE = 'replynextai-ai-widget';
+    const AI_LOADER = 'assets/replynextai-chat-loader.js';
 
     private static $instance = null;
     private $ai_config = null;
@@ -110,7 +111,10 @@ final class ReplyNextAI_Plugin {
         add_filter('plugin_action_links_' . plugin_basename(REPLYNEXTAI_FILE), array($this, 'plugin_links'));
         add_action('wp_enqueue_scripts', array($this, 'frontend_assets'));
         add_action('wp_footer', array($this, 'render_sitewide_whatsapp'));
-        add_filter('script_loader_tag', array($this, 'ai_script_attributes'), 10, 3);
+        add_action('wp_print_footer_scripts', array($this, 'print_ai_widget_config'), 5);
+        add_filter('litespeed_optimize_js_excludes', array($this, 'exclude_ai_loader_from_optimization'));
+        add_filter('litespeed_optm_js_defer_exc', array($this, 'exclude_ai_loader_from_optimization'));
+        add_filter('litespeed_optm_gm_js_exc', array($this, 'exclude_ai_loader_from_optimization'));
         add_shortcode('replynextai_chat', array($this, 'ai_shortcode'));
         add_shortcode('replynextai_whatsapp', array($this, 'whatsapp_shortcode'));
     }
@@ -1296,14 +1300,15 @@ final class ReplyNextAI_Plugin {
         $widget_id = sanitize_text_field((string) get_option('replynextai_widget_id', ''));
         if (!$widget_id) $widget_id = $this->provision_widget($config);
         if (!$widget_id) return false;
-        $this->ai_config = array('widget_id' => $widget_id, 'name' => '', 'email' => '', 'is_user' => 'false');
+        $this->ai_config = array(
+            'widgetId' => $widget_id,
+            'scriptUrl' => add_query_arg('ver', REPLYNEXTAI_VERSION, $server_url . '/chat-widget.js'),
+        );
         if ('1' === $config['share_user_data'] && is_user_logged_in()) {
             $user = wp_get_current_user();
-            $this->ai_config['name'] = $user->display_name;
-            $this->ai_config['email'] = $user->user_email;
-            $this->ai_config['is_user'] = 'true';
+            $this->ai_config['visitor'] = array('name' => $user->display_name, 'email' => $user->user_email);
         }
-        wp_enqueue_script(self::AI_HANDLE, $server_url . '/chat-widget.js', array(), REPLYNEXTAI_VERSION, true);
+        wp_enqueue_script(self::AI_HANDLE, REPLYNEXTAI_URL . self::AI_LOADER, array(), REPLYNEXTAI_VERSION, true);
         return true;
     }
 
@@ -1343,9 +1348,20 @@ final class ReplyNextAI_Plugin {
         }
     }
 
-    public function ai_script_attributes($tag, $handle, $src) {
-        if (self::AI_HANDLE !== $handle || !$this->ai_config) return $tag;
-        /* phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- This modifies the tag for the already-enqueued external widget to pass its documented data attributes. */
-        return sprintf('<script src="%s" data-widget-id="%s" data-visitor-name="%s" data-visitor-email="%s" data-is-user="%s" id="%s-js"></script>', esc_url($src), esc_attr($this->ai_config['widget_id']), esc_attr($this->ai_config['name']), esc_attr($this->ai_config['email']), esc_attr($this->ai_config['is_user']), esc_attr(self::AI_HANDLE));
+    public function print_ai_widget_config() {
+        if (!$this->ai_config) return;
+        // This inert data block is independent from the executable script tag.
+        // An optimizer can rewrite the loader's tag without losing the widget ID.
+        $json = wp_json_encode($this->ai_config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+        if (false !== $json) {
+            wp_print_inline_script_tag($json, array('type' => 'application/json', 'id' => 'replynextai-wordpress-widget-config', 'data-no-optimize' => '1'));
+        }
+    }
+
+    public function exclude_ai_loader_from_optimization($excludes) {
+        // Keep the rest of the storefront's cache and asset optimization intact.
+        $pattern = '/replynextai-chat-loader.js';
+        if (!in_array($pattern, $excludes, true)) $excludes[] = $pattern;
+        return $excludes;
     }
 }
