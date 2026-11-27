@@ -4,7 +4,7 @@ Tags: live chat, ai chatbot, customer support, woocommerce, whatsapp
 Requires at least: 6.0
 Tested up to: 7.1.5
 Requires PHP: 7.4
-Stable tag: 1.4.5
+Stable tag: 1.4.7
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -143,6 +143,14 @@ extensions use the store's native checkout. Enable the desired payment-link
 options under ReplyNext AI > WooCommerce.
 
 == Changelog ==
+
+= 1.4.7 =
+* Refresh the WordPress dashboard and organize the AI chat, contact channels, catalog, and display-rule settings.
+* Improve searchable page visibility controls and make the contact-channel settings easier to manage.
+* Continue strengthening resumable WooCommerce catalog sync and checkout behavior.
+
+= 1.4.6 =
+* Manual WooCommerce product sync now runs without WP-Cron and resumes from the last saved batch after interruptions.
 
 = 1.4.5 =
 * Verify published products, available variations, and current list and sale prices in the WooCommerce store currency.

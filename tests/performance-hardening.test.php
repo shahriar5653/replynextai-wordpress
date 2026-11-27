@@ -9,7 +9,7 @@ $checks = array(
     'catalog lock release' => strpos($source, 'release_catalog_lock($lock_token)') !== false,
     'atomic queue marker' => strpos($source, "CATALOG_QUEUED_OPTION") !== false && strpos($source, "add_option(self::CATALOG_QUEUED_OPTION") !== false,
     'dirty flag' => strpos($source, "CATALOG_DIRTY_TRANSIENT") !== false,
-    'bounded product page' => strpos($source, "'limit' => 100") !== false,
+    'bounded product page' => strpos($source, "'batch_size' => 20") !== false && strpos($source, "'limit' => \$batch_size") !== false,
     'continuation queue' => strpos($source, "queue_catalog_sync(5)") !== false,
     'manual sync runs independently of cron' => strpos($source, '$this->sync_products(true, $marker)') !== false,
     'short catalog timeout' => strpos($source, "'timeout' => 15") !== false,

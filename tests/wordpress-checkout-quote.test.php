@@ -27,7 +27,7 @@ function wc_create_order() { throw new RuntimeException('Quote must never create
 class WP_REST_Response { public $data; public $status; public $headers = array(); public function __construct($data, $status) { $this->data = $data; $this->status = $status; } public function header($key, $value) { $this->headers[$key] = $value; } }
 abstract class WC_Session { private $data = array(); public function get($key, $fallback = null) { return isset($this->data[$key]) ? $this->data[$key] : $fallback; } public function set($key, $value) { $this->data[$key] = $value; } }
 class WC_Customer { private $country = 'BD'; public function __construct($id, $session) {} public function set_billing_country($country) { $this->country = $country; } public function get_billing_country() { return $this->country; } public function __call($method, $arguments) { if (strpos($method, 'set_') !== 0) throw new RuntimeException('Unexpected customer call'); } public function save() { throw new RuntimeException('Quote cannot save customers'); } }
-class WC_Countries { public function get_allowed_countries() { return array('BD' => 'Bangladesh', 'DE' => 'Germany'); } public function get_shipping_countries() { global $quote_test; return $quote_test['not_shippable'] ? array() : $this->get_allowed_countries(); } public function get_states($country) { return array(); } }
+class WC_Countries { public function get_allowed_countries() { return array('BD' => 'Bangladesh', 'DE' => 'Germany'); } public function get_shipping_countries() { global $quote_test; return $quote_test['not_shippable'] ? array() : $this->get_allowed_countries(); } public function get_states($country) { global $quote_test; return $quote_test['states'][$country] ?? array(); } }
 class WC_Validation { public static function is_phone($phone) { return preg_match('/^[0-9+ -]{7,20}$/', $phone); } public static function is_postcode($postcode, $country) { return preg_match($country === 'DE' ? '/^[0-9]{5}$/' : '/^[0-9]{4}$/', $postcode); } }
 class WC_Checkout {
     public function set_data_from_cart(&$order) { $order->from_cart(WC()->cart); }
@@ -170,4 +170,21 @@ $fields = ReplyNextAI_Checkout::handle(new QuoteRequest($de_requirements, 'check
 expect_checkout(array_column($fields, 'required', 'id')['billing_postcode'], 'required checkout fields come from selected destination');
 expect_checkout(ReplyNextAI_Checkout::handle(new QuoteRequest($quote_payload, 'checkout-quote'), $links, 'checkout-options')->status === 401, 'quote signature never authorizes options');
 expect_checkout(array($wc->cart, $wc->customer, $wc->session, $wc->shipping()->packages) === $before, 'new choices also restore native cart and session');
+$quote_test['states'] = array('BD' => array('BD-13' => 'Dhaka', 'BD-15' => 'Faridpur'));
+$quote_test['not_shippable'] = false;
+$quote_test['digital'] = false;
+foreach (array('Dhaka', 'dhaka', 'BD-13', 'Faridpur', 'faridpur') as $district) {
+    $named = $quote_payload;
+    $named['customer']['billing_state'] = $district;
+    $named_result = ReplyNextAI_Checkout::handle(new QuoteRequest($named, 'checkout-options'), $links, 'checkout-options');
+    expect_checkout(!empty($named_result->data['supported']), 'customer district name or native code is accepted: ' . $district . ' ' . json_encode($named_result->data));
+}
+$unknown = $quote_payload;
+$unknown['customer']['billing_state'] = 'Unknown district';
+expect_checkout(ReplyNextAI_Checkout::handle(new QuoteRequest($unknown, 'checkout-options'), $links, 'checkout-options')->status === 400, 'unknown district is not guessed');
+$quote_test['states']['BD']['BD-99'] = 'Dhaka';
+$ambiguous = $quote_payload;
+$ambiguous['customer']['billing_state'] = 'dhaka';
+expect_checkout(ReplyNextAI_Checkout::handle(new QuoteRequest($ambiguous, 'checkout-options'), $links, 'checkout-options')->status === 400, 'ambiguous district label is not guessed');
+unset($quote_test['states']);
 echo "PASS: live destination fields, shipping selection, gateway restrictions and consent\n";

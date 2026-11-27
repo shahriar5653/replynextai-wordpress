@@ -91,6 +91,7 @@ final class ReplyNextAI_Plugin {
     private function __construct() {
         add_action('admin_init', array($this, 'register_settings'));
         add_action('admin_init', array($this, 'activation_redirect'));
+        add_action('admin_init', array($this, 'redirect_legacy_connection_page'));
         add_action('admin_menu', array($this, 'admin_menu'));
         add_action('admin_enqueue_scripts', array($this, 'admin_assets'));
         add_action('admin_post_replynextai_test_connection', array($this, 'handle_test_connection'));
@@ -511,10 +512,8 @@ final class ReplyNextAI_Plugin {
         add_submenu_page('replynextai', __('Dashboard', 'replynext-ai-chat-assistant-for-woocommerce'), __('Dashboard', 'replynext-ai-chat-assistant-for-woocommerce'), 'manage_options', 'replynextai', array($this, 'dashboard_page'));
         add_submenu_page('replynextai', __('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'), __('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'), 'manage_options', 'replynextai-ai', array($this, 'ai_page'));
         add_submenu_page('replynextai', __('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'), __('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'), 'manage_options', 'replynextai-whatsapp', array($this, 'whatsapp_page'));
+        add_submenu_page('replynextai', __('Catalog & Checkout', 'replynext-ai-chat-assistant-for-woocommerce'), __('Catalog & Checkout', 'replynext-ai-chat-assistant-for-woocommerce'), 'manage_options', 'replynextai-woocommerce', array($this, 'woocommerce_page'));
         add_submenu_page('replynextai', __('Display Rules', 'replynext-ai-chat-assistant-for-woocommerce'), __('Display Rules', 'replynext-ai-chat-assistant-for-woocommerce'), 'manage_options', 'replynextai-display', array($this, 'display_page'));
-        add_submenu_page('replynextai', __('Connection', 'replynext-ai-chat-assistant-for-woocommerce'), __('Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'manage_options', 'replynextai-connection', array($this, 'connection_page'));
-        add_submenu_page('replynextai', __('WooCommerce', 'replynext-ai-chat-assistant-for-woocommerce'), __('WooCommerce', 'replynext-ai-chat-assistant-for-woocommerce'), 'manage_options', 'replynextai-woocommerce', array($this, 'woocommerce_page'));
-        add_submenu_page('replynextai', __('Help', 'replynext-ai-chat-assistant-for-woocommerce'), __('Help & Shortcodes', 'replynext-ai-chat-assistant-for-woocommerce'), 'manage_options', 'replynextai-help', array($this, 'help_page'));
     }
 
     public function plugin_links($links) {
@@ -525,13 +524,48 @@ final class ReplyNextAI_Plugin {
     public function admin_assets($hook) {
         if (false === strpos($hook, 'replynextai')) return;
         wp_enqueue_media();
-        wp_enqueue_style('replynextai-admin', REPLYNEXTAI_URL . 'assets/admin.css', array(), REPLYNEXTAI_VERSION);
-        wp_enqueue_script('replynextai-admin', REPLYNEXTAI_URL . 'assets/admin.js', array(), REPLYNEXTAI_VERSION . '.catalog2', true);
+        wp_enqueue_style('replynextai-admin', REPLYNEXTAI_URL . 'assets/admin.css', array(), REPLYNEXTAI_VERSION . '.workspace7');
+        wp_enqueue_script('replynextai-admin', REPLYNEXTAI_URL . 'assets/admin.js', array(), REPLYNEXTAI_VERSION . '.workspace6', true);
     }
 
-    private function page_header($title, $description) {
+    private function page_header($title, $description, $dashboard = false) {
+        $current = isset($_GET['page']) && is_string($_GET['page']) ? sanitize_key(wp_unslash($_GET['page'])) : 'replynextai';
+        $sections = array(
+            'replynextai' => array('dashboard', __('Dashboard', 'replynext-ai-chat-assistant-for-woocommerce')),
+            'replynextai-ai' => array('format-chat', __('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce')),
+            'replynextai-whatsapp' => array('phone', __('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce')),
+            'replynextai-woocommerce' => array('cart', __('Catalog & Checkout', 'replynext-ai-chat-assistant-for-woocommerce')),
+            'replynextai-display' => array('visibility', __('Display Rules', 'replynext-ai-chat-assistant-for-woocommerce')),
+        );
         ?>
-        <div class="rn-admin-header"><div><span class="rn-eyebrow"><?php esc_html_e('ReplyNext AI for WordPress', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h1><?php echo esc_html($title); ?></h1><p><?php echo esc_html($description); ?></p></div><a class="button button-secondary" href="<?php echo esc_url($this->portal_url()); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('Open Client Portal ↗', 'replynext-ai-chat-assistant-for-woocommerce'); ?></a></div>
+        <aside class="rn-workspace-sidebar">
+            <div class="rn-workspace-brand"><span class="rn-workspace-mark" aria-hidden="true">RN</span><div><strong>ReplyNext AI</strong><small><?php esc_html_e('WordPress workspace', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></div></div>
+            <nav class="rn-workspace-nav" aria-label="<?php esc_attr_e('ReplyNext settings', 'replynext-ai-chat-assistant-for-woocommerce'); ?>">
+                <?php foreach ($sections as $page => $section) : ?>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=' . $page)); ?>"<?php if ($current === $page) : ?> aria-current="page"<?php endif; ?>>
+                        <span class="dashicons dashicons-<?php echo esc_attr($section[0]); ?>" aria-hidden="true"></span>
+                        <?php echo esc_html($section[1]); ?>
+                    </a>
+                <?php endforeach; ?>
+            </nav>
+            <div class="rn-workspace-version"><?php esc_html_e('Plugin version', 'replynext-ai-chat-assistant-for-woocommerce'); ?> <strong><?php echo esc_html(REPLYNEXTAI_VERSION); ?></strong></div>
+        </aside>
+        <?php if ('commerce' === $dashboard) return; ?>
+        <?php if ('ai' === $dashboard || 'contact' === $dashboard) : ?>
+            <header class="rn-ai-heading<?php echo 'contact' === $dashboard ? ' rn-contact-heading' : ''; ?>">
+                <?php if ('contact' === $dashboard) : ?>
+                <div><span class="rn-ai-module"><?php esc_html_e('Contact Channels Module', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h1><?php echo esc_html($title); ?></h1><p><?php echo esc_html($description); ?></p></div>
+                <?php else : ?>
+                <span class="dashicons dashicons-admin-customizer" aria-hidden="true"></span>
+                <div><span class="rn-ai-module"><?php esc_html_e('AI Website Chat Module', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h1><?php echo esc_html($title); ?></h1><p><?php echo esc_html($description); ?></p></div>
+                <?php endif; ?>
+            </header>
+            <?php return; ?>
+        <?php endif; ?>
+        <div class="rn-admin-header"><div><span class="rn-eyebrow"><?php if ($dashboard) { printf(esc_html__('✧ ReplyNext AI Intelligence Suite v%s', 'replynext-ai-chat-assistant-for-woocommerce'), esc_html(REPLYNEXTAI_VERSION)); } else { esc_html_e('ReplyNext AI for WordPress', 'replynext-ai-chat-assistant-for-woocommerce'); } ?></span><h1><?php echo esc_html($title); ?></h1><p><?php echo esc_html($description); ?></p></div>
+        <?php if ($dashboard) : ?><div class="rn-dash-actions"><a class="button button-primary" href="<?php echo esc_url(home_url('/')); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('⚡ Live Storefront Preview', 'replynext-ai-chat-assistant-for-woocommerce'); ?></a><?php endif; ?>
+        <a class="button button-secondary" href="<?php echo esc_url($this->portal_url()); ?>" target="_blank" rel="noopener noreferrer"><?php echo $dashboard ? esc_html__('Client Portal ↗', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Open Client Portal ↗', 'replynext-ai-chat-assistant-for-woocommerce'); ?></a>
+        <?php if ($dashboard) : ?></div><?php endif; ?></div>
         <?php
     }
 
@@ -541,16 +575,66 @@ final class ReplyNextAI_Plugin {
 
     public function dashboard_page() {
         $o = $this->options();
-        $ai_ready = $o['api_token'] && get_option('replynextai_widget_id') && '1' === $o['ai_enabled'];
-        $wa_ready = $o['whatsapp_number'] && '1' === $o['whatsapp_enabled'];
+        $connected = !empty($o['api_token']) && (bool) get_option('replynextai_widget_id');
+        $ai = $connected && '1' === $o['ai_enabled'];
+        $contact = ('1' === $o['whatsapp_enabled'] && !empty($o['whatsapp_number']))
+            || ('1' === $o['messenger_enabled'] && !empty($o['messenger_url']))
+            || ('1' === $o['call_enabled'] && !empty($o['call_number']));
+        $woo = function_exists('wc_get_products');
+        $sync = $woo ? $this->catalog_sync_view() : array('phase' => 'idle');
+        $synced = 'completed' === $sync['phase'];
+        $catalog_value = array('completed' => __('Synced', 'replynext-ai-chat-assistant-for-woocommerce'), 'queued' => __('Pending', 'replynext-ai-chat-assistant-for-woocommerce'), 'running' => __('Syncing', 'replynext-ai-chat-assistant-for-woocommerce'), 'failed' => __('Needs attention', 'replynext-ai-chat-assistant-for-woocommerce'));
+        $metrics = array(
+            array('purple', 'chart-line', '—', __('Chat Uptime', 'replynext-ai-chat-assistant-for-woocommerce')),
+            array('green', 'groups', $ai ? __('Active', 'replynext-ai-chat-assistant-for-woocommerce') : __('Off', 'replynext-ai-chat-assistant-for-woocommerce'), __('AI Assistant', 'replynext-ai-chat-assistant-for-woocommerce')),
+            array('blue', 'cart', $catalog_value[$sync['phase']] ?? '—', __('Catalog Sync', 'replynext-ai-chat-assistant-for-woocommerce')),
+            array('orange', 'chart-area', '—', __('Conversion Rate', 'replynext-ai-chat-assistant-for-woocommerce')),
+        );
+        $features = array(
+            array('purple', 'format-chat', __('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'), $ai ? __('Active', 'replynext-ai-chat-assistant-for-woocommerce') : __('Setup needed', 'replynext-ai-chat-assistant-for-woocommerce'), $ai ? __('Live and securely connected to ReplyNext.', 'replynext-ai-chat-assistant-for-woocommerce') : __('Connect ReplyNext to enable the AI assistant on your storefront.', 'replynext-ai-chat-assistant-for-woocommerce'), __('Configure AI Chat', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-ai', $ai),
+            array('green', 'phone', __('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'), $contact ? __('Enabled', 'replynext-ai-chat-assistant-for-woocommerce') : __('Setup needed', 'replynext-ai-chat-assistant-for-woocommerce'), __('Manage WhatsApp, Messenger and call buttons for your storefront.', 'replynext-ai-chat-assistant-for-woocommerce'), __('Manage Channels', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-whatsapp', $contact),
+            array('blue', 'cart', __('WooCommerce Commerce', 'replynext-ai-chat-assistant-for-woocommerce'), $synced ? __('Synchronized', 'replynext-ai-chat-assistant-for-woocommerce') : ($woo ? __('Detected', 'replynext-ai-chat-assistant-for-woocommerce') : __('Unavailable', 'replynext-ai-chat-assistant-for-woocommerce')), __('Catalog synchronization in small, resumable batches, live price verification, and chat checkout orders.', 'replynext-ai-chat-assistant-for-woocommerce'), __('View Catalog & Orders', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-woocommerce', $synced),
+        );
+        $steps = array(
+            array('purple', __('Server & Connection', 'replynext-ai-chat-assistant-for-woocommerce'), __('Configure your ReplyNext server and verify your WordPress connection.', 'replynext-ai-chat-assistant-for-woocommerce'), $connected),
+            array('green', __('Enable Channels', 'replynext-ai-chat-assistant-for-woocommerce'), __('Enable AI website chat or configure the contact channels your customers use.', 'replynext-ai-chat-assistant-for-woocommerce'), $ai || $contact),
+            array('blue', __('Test Storefront', 'replynext-ai-chat-assistant-for-woocommerce'), __('Open the live storefront and test the chat assistant and checkout.', 'replynext-ai-chat-assistant-for-woocommerce'), false),
+        );
         ?>
-        <div class="wrap rn-wrap"><?php $this->page_header(__('Dashboard', 'replynext-ai-chat-assistant-for-woocommerce'), __('Launch free WhatsApp chat or connect your ReplyNext AI sales assistant.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
-        <div class="rn-grid rn-grid-3"><?php $this->status_card(__('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'), $ai_ready, $ai_ready ? __('Live and connected', 'replynext-ai-chat-assistant-for-woocommerce') : __('WordPress token and activation required', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-ai'); ?><?php $this->status_card(__('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'), $wa_ready, $wa_ready ? __('Live using your own number', 'replynext-ai-chat-assistant-for-woocommerce') : __('Add a WhatsApp number', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-whatsapp'); ?><?php $this->status_card(__('Display Rules', 'replynext-ai-chat-assistant-for-woocommerce'), true, __('Control pages and devices', 'replynext-ai-chat-assistant-for-woocommerce'), 'replynextai-display'); ?></div>
-        <div class="rn-card rn-setup-card"><div><span class="rn-step"><?php esc_html_e('QUICK START', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h2><?php esc_html_e('Start converting visitors in three steps', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2></div><ol class="rn-checklist"><li class="<?php echo $o['server_url'] ? 'done' : ''; ?>"><span>1</span><?php esc_html_e('Confirm your ReplyNext server URL', 'replynext-ai-chat-assistant-for-woocommerce'); ?></li><li class="<?php echo ($ai_ready || $wa_ready) ? 'done' : ''; ?>"><span>2</span><?php esc_html_e('Enable AI Chat or Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'); ?></li><li><span>3</span><?php esc_html_e('Open your website privately and send a test message', 'replynext-ai-chat-assistant-for-woocommerce'); ?></li></ol></div>
-        <div class="rn-grid rn-grid-2"><div class="rn-card"><h2><?php esc_html_e('Contact Channels, no API required', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><?php esc_html_e('Open a direct conversation using your own WhatsApp number.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=replynextai-whatsapp')); ?>"><?php esc_html_e('Configure Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'); ?></a></div><div class="rn-card rn-upgrade"><h2><?php esc_html_e('Turn chat into an AI sales agent', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><?php esc_html_e('Capture leads and manage AI conversations in ReplyNext.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><a class="button button-secondary" href="<?php echo esc_url(admin_url('admin.php?page=replynextai-ai')); ?>"><?php esc_html_e('Connect AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></a></div></div></div>
+        <div class="wrap rn-wrap rn-dashboard">
+            <?php $this->page_header(__('WooCommerce AI Sales & Support', 'replynext-ai-chat-assistant-for-woocommerce'), __('Supercharge your online store with AI-powered website chat, seamless WhatsApp contact channels, and automated WooCommerce catalog synchronization.', 'replynext-ai-chat-assistant-for-woocommerce'), true); ?>
+            <div class="rn-metric-grid">
+                <?php foreach ($metrics as $metric) : ?>
+                    <div class="rn-dash-panel rn-dash-metric rn-tone-<?php echo esc_attr($metric[0]); ?>">
+                        <span class="rn-dash-icon dashicons dashicons-<?php echo esc_attr($metric[1]); ?>" aria-hidden="true"></span>
+                        <div><strong><?php echo esc_html($metric[2]); ?></strong><small><?php echo esc_html($metric[3]); ?></small></div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            <div class="rn-feature-grid">
+                <?php foreach ($features as $feature) : ?>
+                    <section class="rn-dash-panel rn-dash-feature rn-tone-<?php echo esc_attr($feature[0]); ?>">
+                        <div class="rn-dash-feature-top"><span class="rn-dash-icon dashicons dashicons-<?php echo esc_attr($feature[1]); ?>" aria-hidden="true"></span><span class="rn-dash-badge<?php echo $feature[7] ? '' : ' rn-dash-muted'; ?>"><?php echo esc_html($feature[3]); ?></span></div>
+                        <h2><?php echo esc_html($feature[2]); ?></h2>
+                        <p><?php echo esc_html($feature[4]); ?></p>
+                        <a href="<?php echo esc_url(admin_url('admin.php?page=' . $feature[6])); ?>"><?php echo esc_html($feature[5]); ?> <span aria-hidden="true">→</span></a>
+                    </section>
+                <?php endforeach; ?>
+            </div>
+            <section class="rn-dash-panel rn-dash-checklist">
+                <header><span class="rn-dash-icon rn-tone-purple" aria-hidden="true">🚀</span><div><h2><?php esc_html_e('Quick Start Checklist', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><?php esc_html_e('Follow these 3 simple steps to launch your AI sales agent', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p></div></header>
+                <ol>
+                    <?php foreach ($steps as $index => $step) : ?>
+                        <li class="rn-tone-<?php echo esc_attr($step[0]); ?>">
+                            <div class="rn-dash-feature-top"><span class="rn-dash-badge"><?php printf(esc_html__('Step %d', 'replynext-ai-chat-assistant-for-woocommerce'), $index + 1); ?></span><?php if ($step[3]) : ?><span class="dashicons dashicons-yes-alt" role="img" aria-label="<?php esc_attr_e('Complete', 'replynext-ai-chat-assistant-for-woocommerce'); ?>"></span><?php endif; ?></div>
+                            <h3><?php echo esc_html($step[1]); ?></h3><p><?php echo esc_html($step[2]); ?></p>
+                        </li>
+                    <?php endforeach; ?>
+                </ol>
+            </section>
+        </div>
         <?php
     }
-
     private function status_card($title, $ready, $message, $page) {
         ?><a class="rn-card rn-status-card" href="<?php echo esc_url(admin_url('admin.php?page=' . $page)); ?>"><span class="rn-status <?php echo $ready ? 'is-live' : 'is-off'; ?>"><?php echo $ready ? esc_html__('Active', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Setup', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h2><?php echo esc_html($title); ?></h2><p><?php echo esc_html($message); ?></p></a><?php
     }
@@ -574,8 +658,8 @@ final class ReplyNextAI_Plugin {
     public function ai_page() {
         $o = $this->options();
         ?>
-        <div class="wrap rn-wrap">
-            <?php $this->page_header(__('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'), __('Connect the AI chat module configured in your ReplyNext client portal.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
+        <div class="wrap rn-wrap rn-ai-page">
+            <?php $this->page_header(__('AI Chat & Connection', 'replynext-ai-chat-assistant-for-woocommerce'), __('Securely link your ReplyNext Client Portal with your WordPress store.', 'replynext-ai-chat-assistant-for-woocommerce'), 'ai'); ?>
             <?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- The action handler validates its POST nonce; this query value only selects a bounded notice. */ if (isset($_GET['rn_widget_refresh'])) : ?>
                 <div class="notice <?php echo 'success' === sanitize_key(wp_unslash($_GET['rn_widget_refresh'])) ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php echo 'success' === sanitize_key(wp_unslash($_GET['rn_widget_refresh'])) ? esc_html__('Widget connection refreshed successfully.', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Unable to refresh the widget connection. Your existing connection settings were kept.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p></div>
             <?php endif; ?>
@@ -585,58 +669,98 @@ final class ReplyNextAI_Plugin {
             <?php endif; ?>
 
             <?php $this->form_open(); $this->preserve_fields(array('server_url', 'api_token', 'ai_enabled', 'ai_sitewide', 'share_user_data')); ?>
-                <div class="rn-grid rn-grid-form">
-                    <div class="rn-card">
-                        <label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Also enable it in the ReplyNext portal.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_enabled]" value="1" <?php checked($o['ai_enabled'], '1'); ?> /></label>
-                        <?php $this->field('server_url', __('ReplyNext server URL', 'replynext-ai-chat-assistant-for-woocommerce'), $o['server_url'], 'https://replynextai.com', 'url'); ?>
-                        <label class="rn-field"><span><?php esc_html_e('WordPress connection token', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="password" autocomplete="new-password" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_token]" value="<?php echo esc_attr($o['api_token']); ?>" placeholder="rnwp_live_..." /></label>
-                        <p class="description"><?php esc_html_e('Create a WordPress Plugin Connection in Client Portal → Integrations → WordPress, then paste its token here.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
-                        <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_sitewide]" value="1" <?php checked($o['ai_sitewide'], '1'); ?> /> <?php esc_html_e('Show AI chat on every allowed page', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label>
-                        <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[share_user_data]" value="1" <?php checked($o['share_user_data'], '1'); ?> /> <?php esc_html_e('Pass logged-in WordPress user name and email', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label>
-                        <p class="description"><?php esc_html_e('Enable only when covered by your privacy notice.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
-                        <?php submit_button(__('Save Connection & AI Chat Settings', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
+                <div class="rn-card rn-ai-settings">
+                    <label class="rn-toggle-row rn-ai-toggle"><span><strong><?php esc_html_e('Enable AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Turn on the assistant for this connected WordPress site.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input class="rn-ai-switch" type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_enabled]" value="1" <?php checked($o['ai_enabled'], '1'); ?> /></label>
+                    <?php $this->field('server_url', __('ReplyNext Server URL', 'replynext-ai-chat-assistant-for-woocommerce'), $o['server_url'], 'https://replynextai.com', 'url'); ?>
+                    <label for="rn-ai-token" class="rn-ai-token-label"><?php esc_html_e('WordPress Connection Token', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label>
+                    <div class="rn-ai-token-row">
+                        <input id="rn-ai-token" type="password" autocomplete="new-password" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_token]" value="<?php echo esc_attr($o['api_token']); ?>" placeholder="rnwp_live_..." aria-describedby="rn-ai-token-help" />
+                        <button class="button rn-ai-test" type="submit" form="rn-ai-test-form"><?php esc_html_e('Test Connection', 'replynext-ai-chat-assistant-for-woocommerce'); ?></button>
                     </div>
-                    <div class="rn-card rn-preview-card"><span class="rn-step"><?php esc_html_e('LIVE PREVIEW', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><p class="description"><?php esc_html_e('Preview and manage your customer-facing chat from the ReplyNext Client Portal.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><div class="rn-site-preview"><div class="rn-browser-bar"><i></i><i></i><i></i></div><div class="rn-preview-content"><h3><?php esc_html_e('ReplyNext AI customer chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h3><p><?php esc_html_e('Save the connection, then test it to create the secure widget authorization for this WordPress site.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p></div></div><p><code>[replynextai_chat]</code></p></div>
+                    <p id="rn-ai-token-help" class="description"><?php esc_html_e('Create a token in Client Portal → Integrations → WordPress. Save changes before testing the connection.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                    <div class="rn-ai-options">
+                        <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[ai_sitewide]" value="1" <?php checked($o['ai_sitewide'], '1'); ?> /><span><strong><?php esc_html_e('Sitewide Display', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Show the chat widget on all storefront pages allowed by Display Rules.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span></label>
+                        <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[share_user_data]" value="1" <?php checked($o['share_user_data'], '1'); ?> /><span><strong><?php esc_html_e('Share Logged-in User Identity', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Share the logged-in user’s name and email only when covered by your privacy notice.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span></label>
+                    </div>
                 </div>
+                <div class="rn-ai-save"><?php submit_button(__('Save AI Chat Settings', 'replynext-ai-chat-assistant-for-woocommerce')); ?></div>
             </form>
-
-            <div class="rn-card rn-narrow"><h2><?php esc_html_e('Secure connection', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><p><?php esc_html_e('After saving your server URL and WordPress connection token, test the connection to create or reuse this site’s secure widget.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_test_connection" /><input type="hidden" name="return_page" value="replynextai-ai" /><?php wp_nonce_field('replynextai_test_connection'); ?><?php submit_button(__('Test Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'secondary', 'submit', false); ?></form><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_refresh_widget_connection" /><?php wp_nonce_field('replynextai_refresh_widget_connection'); ?><?php submit_button(__('Refresh Widget Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'secondary', 'submit', false); ?></form></div>
+            <form id="rn-ai-test-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" hidden><input type="hidden" name="action" value="replynextai_test_connection" /><input type="hidden" name="return_page" value="replynextai-ai" /><?php wp_nonce_field('replynextai_test_connection'); ?></form>
+            <details class="rn-ai-advanced">
+                <summary><?php esc_html_e('Advanced connection tools', 'replynext-ai-chat-assistant-for-woocommerce'); ?></summary>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_refresh_widget_connection" /><?php wp_nonce_field('replynextai_refresh_widget_connection'); ?><?php submit_button(__('Refresh Widget Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'secondary', 'submit', false); ?></form>
+            </details>
         </div>
         <?php
     }
 
     public function whatsapp_page() {
         $o = $this->options();
-        ?><div class="wrap rn-wrap"><?php $this->page_header(__('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'), __('Customize the compact launcher and each channel. Icons use safe WordPress media URLs.', 'replynext-ai-chat-assistant-for-woocommerce')); ?><?php $this->form_open(); $this->preserve_fields(array('contact_label', 'contact_show_label', 'contact_color', 'contact_text_color', 'contact_icon_id', 'whatsapp_enabled', 'whatsapp_number', 'whatsapp_message', 'whatsapp_label', 'whatsapp_icon_id', 'whatsapp_show_label', 'whatsapp_color', 'whatsapp_text_color', 'whatsapp_position', 'whatsapp_delay', 'messenger_enabled', 'messenger_url', 'messenger_label', 'messenger_show_label', 'messenger_color', 'messenger_text_color', 'messenger_icon_id', 'call_enabled', 'call_number', 'call_label', 'call_show_label', 'call_color', 'call_text_color', 'phone_icon_id')); ?>
+        ?><div class="wrap rn-wrap rn-contact-page"><?php $this->page_header(__('WhatsApp & Contact Buttons', 'replynext-ai-chat-assistant-for-woocommerce'), __('Enable direct WhatsApp, Messenger and phone buttons for your store visitors.', 'replynext-ai-chat-assistant-for-woocommerce'), 'contact'); ?><?php $this->form_open(); $this->preserve_fields(array('contact_label', 'contact_show_label', 'contact_color', 'contact_text_color', 'contact_icon_id', 'whatsapp_enabled', 'whatsapp_number', 'whatsapp_message', 'whatsapp_label', 'whatsapp_icon_id', 'whatsapp_show_label', 'whatsapp_color', 'whatsapp_text_color', 'whatsapp_position', 'whatsapp_delay', 'messenger_enabled', 'messenger_url', 'messenger_label', 'messenger_show_label', 'messenger_color', 'messenger_text_color', 'messenger_icon_id', 'call_enabled', 'call_number', 'call_label', 'call_show_label', 'call_color', 'call_text_color', 'phone_icon_id')); ?>
         <div class="rn-contact-cards">
-            <section class="rn-card rn-contact-card"><h2><?php esc_html_e('Launcher', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><?php $this->field('contact_label', __('Launcher label', 'replynext-ai-chat-assistant-for-woocommerce'), $o['contact_label'], __('Contact Us', 'replynext-ai-chat-assistant-for-woocommerce')); ?><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[contact_show_label]" value="1" <?php checked($o['contact_show_label'], '1'); ?> /> <?php esc_html_e('Show label', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><?php $this->contact_icon_picker(__('Launcher icon', 'replynext-ai-chat-assistant-for-woocommerce'), 'contact_icon_id', 'rn-contact-icon-id', $o['contact_icon_id']); ?><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Background color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[contact_color]" value="<?php echo esc_attr($o['contact_color']); ?>" /></label><label class="rn-field"><span><?php esc_html_e('Icon/text color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[contact_text_color]" value="<?php echo esc_attr($o['contact_text_color']); ?>" /></label></div></section>
-            <section class="rn-card rn-contact-card"><h2><?php esc_html_e('WhatsApp', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable WhatsApp Channel', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Opens wa.me in the visitor’s WhatsApp app.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_enabled]" value="1" <?php checked($o['whatsapp_enabled'], '1'); ?> /></label><?php $this->field('whatsapp_number', __('WhatsApp number', 'replynext-ai-chat-assistant-for-woocommerce'), $o['whatsapp_number'], '8801XXXXXXXXX', 'tel'); ?><label class="rn-field"><span><?php esc_html_e('Prefilled message', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><textarea rows="3" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_message]"><?php echo esc_textarea($o['whatsapp_message']); ?></textarea></label><?php $this->field('whatsapp_label', __('Label', 'replynext-ai-chat-assistant-for-woocommerce'), $o['whatsapp_label'], __('Chat on WhatsApp', 'replynext-ai-chat-assistant-for-woocommerce')); ?><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_show_label]" value="1" <?php checked($o['whatsapp_show_label'], '1'); ?> /> <?php esc_html_e('Show label', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><?php $this->contact_icon_picker(__('WhatsApp icon', 'replynext-ai-chat-assistant-for-woocommerce'), 'whatsapp_icon_id', 'rn-whatsapp-icon-id', $o['whatsapp_icon_id']); ?><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Background color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_color]" value="<?php echo esc_attr($o['whatsapp_color']); ?>" /></label><label class="rn-field"><span><?php esc_html_e('Icon/text color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_text_color]" value="<?php echo esc_attr($o['whatsapp_text_color']); ?>" /></label></div></section>
-            <section class="rn-card rn-contact-card"><h2><?php esc_html_e('Messenger', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable Messenger Channel', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Opens your Facebook or Messenger link.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[messenger_enabled]" value="1" <?php checked($o['messenger_enabled'], '1'); ?> /></label><?php $this->field('messenger_url', __('Messenger link', 'replynext-ai-chat-assistant-for-woocommerce'), $o['messenger_url'], 'https://m.me/your-page'); ?><?php $this->field('messenger_label', __('Label', 'replynext-ai-chat-assistant-for-woocommerce'), $o['messenger_label'], __('Message on Messenger', 'replynext-ai-chat-assistant-for-woocommerce')); ?><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[messenger_show_label]" value="1" <?php checked($o['messenger_show_label'], '1'); ?> /> <?php esc_html_e('Show label', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><?php $this->contact_icon_picker(__('Messenger icon', 'replynext-ai-chat-assistant-for-woocommerce'), 'messenger_icon_id', 'rn-messenger-icon-id', $o['messenger_icon_id']); ?><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Background color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[messenger_color]" value="<?php echo esc_attr($o['messenger_color']); ?>" /></label><label class="rn-field"><span><?php esc_html_e('Icon/text color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[messenger_text_color]" value="<?php echo esc_attr($o['messenger_text_color']); ?>" /></label></div></section>
-            <section class="rn-card rn-contact-card"><h2><?php esc_html_e('Phone / Call', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable Phone / Call Channel', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Starts a phone call from the visitor’s device.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[call_enabled]" value="1" <?php checked($o['call_enabled'], '1'); ?> /></label><?php $this->field('call_number', __('Phone number', 'replynext-ai-chat-assistant-for-woocommerce'), $o['call_number'], '+8801XXXXXXXXX', 'tel'); ?><?php $this->field('call_label', __('Label', 'replynext-ai-chat-assistant-for-woocommerce'), $o['call_label'], __('Call us', 'replynext-ai-chat-assistant-for-woocommerce')); ?><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[call_show_label]" value="1" <?php checked($o['call_show_label'], '1'); ?> /> <?php esc_html_e('Show label', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><?php $this->contact_icon_picker(__('Phone icon', 'replynext-ai-chat-assistant-for-woocommerce'), 'phone_icon_id', 'rn-phone-icon-id', $o['phone_icon_id']); ?><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Background color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[call_color]" value="<?php echo esc_attr($o['call_color']); ?>" /></label><label class="rn-field"><span><?php esc_html_e('Icon/text color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[call_text_color]" value="<?php echo esc_attr($o['call_text_color']); ?>" /></label></div></section>
-            <section class="rn-card rn-contact-card rn-contact-display-settings"><h2><?php esc_html_e('Display Settings', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Position', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><select name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_position]"><option value="left" <?php selected($o['whatsapp_position'], 'left'); ?>><?php esc_html_e('Bottom left', 'replynext-ai-chat-assistant-for-woocommerce'); ?></option><option value="right" <?php selected($o['whatsapp_position'], 'right'); ?>><?php esc_html_e('Bottom right', 'replynext-ai-chat-assistant-for-woocommerce'); ?></option></select></label><label class="rn-field"><span><?php esc_html_e('Delay', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="number" min="0" max="30" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_delay]" value="<?php echo esc_attr($o['whatsapp_delay']); ?>" /></label></div></section>
+            <section class="rn-card rn-contact-card rn-contact-wa"><label class="rn-toggle-row"><span><strong><?php esc_html_e('WhatsApp Click-to-Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Opens wa.me in the visitor’s WhatsApp app.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_enabled]" value="1" <?php checked($o['whatsapp_enabled'], '1'); ?> /></label><?php $this->field('whatsapp_number', __('WhatsApp number', 'replynext-ai-chat-assistant-for-woocommerce'), $o['whatsapp_number'], '8801XXXXXXXXX', 'tel'); ?><label class="rn-field"><span><?php esc_html_e('Prefilled message', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><textarea rows="3" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_message]"><?php echo esc_textarea($o['whatsapp_message']); ?></textarea></label><?php $this->field('whatsapp_label', __('Label', 'replynext-ai-chat-assistant-for-woocommerce'), $o['whatsapp_label'], __('Chat on WhatsApp', 'replynext-ai-chat-assistant-for-woocommerce')); ?><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Position', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><select name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_position]"><option value="left" <?php selected($o['whatsapp_position'], 'left'); ?>><?php esc_html_e('Bottom left', 'replynext-ai-chat-assistant-for-woocommerce'); ?></option><option value="right" <?php selected($o['whatsapp_position'], 'right'); ?>><?php esc_html_e('Bottom right', 'replynext-ai-chat-assistant-for-woocommerce'); ?></option></select></label><label class="rn-field"><span><?php esc_html_e('Delay', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="number" min="0" max="30" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_delay]" value="<?php echo esc_attr($o['whatsapp_delay']); ?>" /></label></div><details class="rn-contact-customize"><summary><?php esc_html_e('Label, icon & colors', 'replynext-ai-chat-assistant-for-woocommerce'); ?></summary><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_show_label]" value="1" <?php checked($o['whatsapp_show_label'], '1'); ?> /> <?php esc_html_e('Show label', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><?php $this->contact_icon_picker(__('WhatsApp icon', 'replynext-ai-chat-assistant-for-woocommerce'), 'whatsapp_icon_id', 'rn-whatsapp-icon-id', $o['whatsapp_icon_id']); ?><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Background color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_color]" value="<?php echo esc_attr($o['whatsapp_color']); ?>" /></label><label class="rn-field"><span><?php esc_html_e('Icon/text color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[whatsapp_text_color]" value="<?php echo esc_attr($o['whatsapp_text_color']); ?>" /></label></div></details></section>
+            <section class="rn-card rn-contact-card"><h2><?php esc_html_e('Messenger', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable Messenger Channel', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Opens your Facebook or Messenger link.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[messenger_enabled]" value="1" <?php checked($o['messenger_enabled'], '1'); ?> /></label><?php $this->field('messenger_url', __('Messenger link', 'replynext-ai-chat-assistant-for-woocommerce'), $o['messenger_url'], 'https://m.me/your-page'); ?><details class="rn-contact-customize"><summary><?php esc_html_e('Label, icon & colors', 'replynext-ai-chat-assistant-for-woocommerce'); ?></summary><?php $this->field('messenger_label', __('Label', 'replynext-ai-chat-assistant-for-woocommerce'), $o['messenger_label'], __('Message on Messenger', 'replynext-ai-chat-assistant-for-woocommerce')); ?><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[messenger_show_label]" value="1" <?php checked($o['messenger_show_label'], '1'); ?> /> <?php esc_html_e('Show label', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><?php $this->contact_icon_picker(__('Messenger icon', 'replynext-ai-chat-assistant-for-woocommerce'), 'messenger_icon_id', 'rn-messenger-icon-id', $o['messenger_icon_id']); ?><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Background color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[messenger_color]" value="<?php echo esc_attr($o['messenger_color']); ?>" /></label><label class="rn-field"><span><?php esc_html_e('Icon/text color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[messenger_text_color]" value="<?php echo esc_attr($o['messenger_text_color']); ?>" /></label></div></details></section>
+            <section class="rn-card rn-contact-card"><h2><?php esc_html_e('Phone / Call', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><label class="rn-toggle-row"><span><strong><?php esc_html_e('Enable Phone / Call Channel', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Starts a phone call from the visitor’s device.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></span><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[call_enabled]" value="1" <?php checked($o['call_enabled'], '1'); ?> /></label><?php $this->field('call_number', __('Phone number', 'replynext-ai-chat-assistant-for-woocommerce'), $o['call_number'], '+8801XXXXXXXXX', 'tel'); ?><details class="rn-contact-customize"><summary><?php esc_html_e('Label, icon & colors', 'replynext-ai-chat-assistant-for-woocommerce'); ?></summary><?php $this->field('call_label', __('Label', 'replynext-ai-chat-assistant-for-woocommerce'), $o['call_label'], __('Call us', 'replynext-ai-chat-assistant-for-woocommerce')); ?><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[call_show_label]" value="1" <?php checked($o['call_show_label'], '1'); ?> /> <?php esc_html_e('Show label', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><?php $this->contact_icon_picker(__('Phone icon', 'replynext-ai-chat-assistant-for-woocommerce'), 'phone_icon_id', 'rn-phone-icon-id', $o['phone_icon_id']); ?><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Background color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[call_color]" value="<?php echo esc_attr($o['call_color']); ?>" /></label><label class="rn-field"><span><?php esc_html_e('Icon/text color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[call_text_color]" value="<?php echo esc_attr($o['call_text_color']); ?>" /></label></div></details></section>
+            <details class="rn-card rn-contact-card rn-contact-appearance"><summary><?php esc_html_e('Launcher', 'replynext-ai-chat-assistant-for-woocommerce'); ?></summary><?php $this->field('contact_label', __('Launcher label', 'replynext-ai-chat-assistant-for-woocommerce'), $o['contact_label'], __('Contact Us', 'replynext-ai-chat-assistant-for-woocommerce')); ?><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[contact_show_label]" value="1" <?php checked($o['contact_show_label'], '1'); ?> /> <?php esc_html_e('Show label', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><?php $this->contact_icon_picker(__('Launcher icon', 'replynext-ai-chat-assistant-for-woocommerce'), 'contact_icon_id', 'rn-contact-icon-id', $o['contact_icon_id']); ?><div class="rn-inline-fields"><label class="rn-field"><span><?php esc_html_e('Background color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[contact_color]" value="<?php echo esc_attr($o['contact_color']); ?>" /></label><label class="rn-field"><span><?php esc_html_e('Icon/text color', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="color" name="<?php echo esc_attr(self::OPTION_KEY); ?>[contact_text_color]" value="<?php echo esc_attr($o['contact_text_color']); ?>" /></label></div></details>
         </div><?php submit_button(__('Save Contact Channels Settings', 'replynext-ai-chat-assistant-for-woocommerce')); ?></form></div><?php
     }
 
     public function display_page() {
         $o = $this->options();
         $targets = get_posts(array('post_type' => array('page', 'post'), 'post_status' => 'publish', 'numberposts' => -1, 'orderby' => 'title', 'order' => 'ASC'));
-        ?><div class="wrap rn-wrap"><?php $this->page_header(__('Display Rules', 'replynext-ai-chat-assistant-for-woocommerce'), __('Control where both chat modules appear.', 'replynext-ai-chat-assistant-for-woocommerce')); ?><?php $this->form_open(); $this->preserve_fields(array('show_on', 'include_pages', 'exclude_pages', 'hide_mobile', 'hide_desktop')); ?><div class="rn-card rn-narrow"><label class="rn-field"><span><?php esc_html_e('Page targeting', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><select name="<?php echo esc_attr(self::OPTION_KEY); ?>[show_on]"><option value="all" <?php selected($o['show_on'], 'all'); ?>><?php esc_html_e('All public pages', 'replynext-ai-chat-assistant-for-woocommerce'); ?></option><option value="include" <?php selected($o['show_on'], 'include'); ?>><?php esc_html_e('Only selected pages/posts', 'replynext-ai-chat-assistant-for-woocommerce'); ?></option></select></label>
-        <?php $include_ids = array_map('strval', explode(',', $o['include_pages'])); $exclude_ids = array_map('strval', explode(',', $o['exclude_pages'])); ?>
-        <div class="rn-page-pickers"><div class="rn-page-picker"><strong><?php esc_html_e('Include pages', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Show the chat only on selected pages.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small><div class="rn-page-list"><?php if (empty($targets)) : ?><em><?php esc_html_e('No published pages found.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></em><?php else : foreach ($targets as $target) : ?><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[include_pages][]" value="<?php echo esc_attr($target->ID); ?>" <?php checked(in_array((string) $target->ID, $include_ids, true)); ?> /> <span><?php echo esc_html($target->post_title ?: __('(no title)', 'replynext-ai-chat-assistant-for-woocommerce')); ?></span></label><?php endforeach; endif; ?></div></div>
-        <div class="rn-page-picker"><strong><?php esc_html_e('Exclude pages', 'replynext-ai-chat-assistant-for-woocommerce'); ?></strong><small><?php esc_html_e('Hide the chat on selected pages. Exclusions always win.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small><div class="rn-page-list"><?php if (empty($targets)) : ?><em><?php esc_html_e('No published pages found.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></em><?php else : foreach ($targets as $target) : ?><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[exclude_pages][]" value="<?php echo esc_attr($target->ID); ?>" <?php checked(in_array((string) $target->ID, $exclude_ids, true)); ?> /> <span><?php echo esc_html($target->post_title ?: __('(no title)', 'replynext-ai-chat-assistant-for-woocommerce')); ?></span></label><?php endforeach; endif; ?></div></div></div>
-        <p class="description"><?php esc_html_e('Click a page to select or deselect it.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[hide_mobile]" value="1" <?php checked($o['hide_mobile'], '1'); ?> /> <?php esc_html_e('Hide on mobile', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[hide_desktop]" value="1" <?php checked($o['hide_desktop'], '1'); ?> /> <?php esc_html_e('Hide on desktop', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label><?php submit_button(__('Save Display Rules', 'replynext-ai-chat-assistant-for-woocommerce')); ?></div></form></div><?php
+        $include = explode(',', $o['include_pages']);
+        $exclude = explode(',', $o['exclude_pages']);
+        $listed_ids = array_map(static function ($target) { return (string) $target->ID; }, $targets);
+        ?><div class="wrap rn-wrap rn-display-page">
+            <?php $this->page_header(__('Display Rules', 'replynext-ai-chat-assistant-for-woocommerce'), __('Choose where the AI chat and contact buttons appear on your storefront.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
+            <?php $this->form_open(); $this->preserve_fields(array('show_on', 'include_pages', 'exclude_pages', 'hide_mobile', 'hide_desktop')); ?>
+            <section class="rn-card rn-display-card" data-rn-display-rules>
+                <h2><?php esc_html_e('Page Visibility', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
+                <p><?php esc_html_e('In All public pages mode, new pages are shown automatically. Uncheck a page to hide both launchers there.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                <label class="rn-field"><span><?php esc_html_e('Visibility mode', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span>
+                    <select name="<?php echo esc_attr(self::OPTION_KEY); ?>[show_on]" data-rn-display-mode>
+                        <option value="all" <?php selected($o['show_on'], 'all'); ?>><?php esc_html_e('All public pages', 'replynext-ai-chat-assistant-for-woocommerce'); ?></option>
+                        <option value="include" <?php selected($o['show_on'], 'include'); ?>><?php esc_html_e('Only selected pages/posts', 'replynext-ai-chat-assistant-for-woocommerce'); ?></option>
+                    </select>
+                </label>
+                <input type="hidden" data-rn-display-include name="<?php echo esc_attr(self::OPTION_KEY); ?>[include_pages]" value="<?php echo esc_attr($o['include_pages']); ?>" data-preserve="<?php echo esc_attr(implode(',', array_diff($include, $listed_ids))); ?>" />
+                <input type="hidden" data-rn-display-exclude name="<?php echo esc_attr(self::OPTION_KEY); ?>[exclude_pages]" value="<?php echo esc_attr($o['exclude_pages']); ?>" data-preserve="<?php echo esc_attr(implode(',', array_diff($exclude, $listed_ids))); ?>" />
+                <div class="rn-display-toolbar">
+                    <label><?php esc_html_e('Find a page or post', 'replynext-ai-chat-assistant-for-woocommerce'); ?><input type="search" data-rn-display-filter /></label>
+                    <span data-rn-display-count aria-live="polite"></span>
+                </div>
+                <div class="rn-page-list rn-display-list">
+                    <?php if (!$targets) : ?><p><?php esc_html_e('No published pages or posts found.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php endif; ?>
+                    <?php foreach ($targets as $target) :
+                        $id = (string) $target->ID;
+                        $all = !in_array($id, $exclude, true);
+                        $selected = $all && in_array($id, $include, true);
+                    ?>
+                    <label data-rn-display-row><input type="checkbox" data-rn-display-page data-all="<?php echo $all ? '1' : '0'; ?>" data-selected="<?php echo $selected ? '1' : '0'; ?>" value="<?php echo esc_attr($id); ?>" <?php checked('all' === $o['show_on'] ? $all : $selected); ?> /><span><?php echo esc_html($target->post_title ?: __('(no title)', 'replynext-ai-chat-assistant-for-woocommerce')); ?></span><small><?php echo 'page' === $target->post_type ? esc_html__('Page', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Post', 'replynext-ai-chat-assistant-for-woocommerce'); ?></small></label>
+                    <?php endforeach; ?>
+                </div>
+                <noscript><p><?php esc_html_e('Enable JavaScript to edit individual page checkboxes.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p></noscript>
+            </section>
+            <section class="rn-card rn-display-card">
+                <h2><?php esc_html_e('Device Visibility', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
+                <p><?php esc_html_e('These settings apply to both launchers. Leave both unchecked to show them on all devices.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
+                <div class="rn-display-devices">
+                    <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[hide_mobile]" value="1" <?php checked($o['hide_mobile'], '1'); ?> /> <?php esc_html_e('Hide on mobile', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label>
+                    <label class="rn-check"><input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[hide_desktop]" value="1" <?php checked($o['hide_desktop'], '1'); ?> /> <?php esc_html_e('Hide on desktop', 'replynext-ai-chat-assistant-for-woocommerce'); ?></label>
+                </div>
+            </section>
+            <div class="rn-ai-save"><?php submit_button(__('Save Display Rules', 'replynext-ai-chat-assistant-for-woocommerce')); ?></div>
+            </form>
+        </div><?php
     }
-
-    public function connection_page() {
-        $o = $this->options();
-        $status = $this->remote_status(false);
-        ?><div class="wrap rn-wrap"><?php $this->page_header(__('ReplyNext Connection', 'replynext-ai-chat-assistant-for-woocommerce'), __('Use a revocable WordPress token from your client portal—never enter your account password here.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
-        <?php /* phpcs:ignore WordPress.Security.NonceVerification.Recommended -- This is a read-only redirect notice; form processing is protected by settings_fields() and the admin-post nonce. */ if (isset($_GET['rn_notice'])) : ?><?php $notice = sanitize_key(wp_unslash($_GET['rn_notice'])); ?><div class="notice <?php echo 'success' === $notice ? 'notice-success' : 'notice-error'; ?> is-dismissible"><p><?php if ('success' === $notice) { esc_html_e('Connection successful.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('company_save_error' === $notice) { esc_html_e('Connection verified, but the company binding could not be saved. Please try again or contact support.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_revoked' === $notice) { esc_html_e('Secure AI Website Chat authorization is revoked. Reactivate or remove the website authorization in ReplyNext before retrying.', 'replynext-ai-chat-assistant-for-woocommerce'); } elseif ('widget_error' === $notice) { esc_html_e('Secure AI Website Chat authorization could not be created. Your connection settings were kept; please try again.', 'replynext-ai-chat-assistant-for-woocommerce'); } else { esc_html_e('Connection failed. Check the server URL and token.', 'replynext-ai-chat-assistant-for-woocommerce'); } ?></p></div><?php endif; ?>
-        <div class="rn-grid rn-grid-form"><div class="rn-card"><?php $this->form_open(); $this->preserve_fields(array('server_url', 'api_token')); ?><?php $this->field('server_url', __('ReplyNext server URL', 'replynext-ai-chat-assistant-for-woocommerce'), $o['server_url'], 'https://replynextai.com', 'url'); ?><label class="rn-field"><span><?php esc_html_e('WordPress connection token', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><input type="password" autocomplete="new-password" name="<?php echo esc_attr(self::OPTION_KEY); ?>[api_token]" value="<?php echo esc_attr($o['api_token']); ?>" placeholder="rnwp_live_..." /></label><p class="description"><?php esc_html_e('Generate this token from Client Portal → Integrations → WordPress.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php submit_button(__('Save Connection', 'replynext-ai-chat-assistant-for-woocommerce')); ?></form>
-        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="replynextai_test_connection" /><?php wp_nonce_field('replynextai_test_connection'); ?><?php submit_button(__('Test Connection', 'replynext-ai-chat-assistant-for-woocommerce'), 'secondary', 'submit', false); ?></form></div>
-        <div class="rn-card"><span class="rn-status <?php echo $status ? 'is-live' : 'is-off'; ?>"><?php echo $status ? esc_html__('Connected', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Not connected', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h2><?php esc_html_e('Connection status', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><?php if ($status) : ?><p><strong><?php echo esc_html($status['company']['name']); ?></strong></p><?php /* translators: 1: plan name, 2: product count, 3: lead count. */ ?><p><?php echo esc_html(sprintf(__('Plan: %1$s · Products: %2$d · Leads: %3$d', 'replynext-ai-chat-assistant-for-woocommerce'), $status['company']['planName'] ?: $status['company']['planId'], $status['stats']['products'], $status['stats']['totalLeads'])); ?></p><?php else : ?><p><?php esc_html_e('Save a valid token and test the connection.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p><?php endif; ?></div></div></div><?php
+    public function redirect_legacy_connection_page() {
+        global $pagenow;
+        // Read-only navigation for saved bookmarks; never submit connection settings here.
+        if ('admin.php' !== $pagenow || !current_user_can('manage_options') || !isset($_GET['page']) ||
+            !is_string($_GET['page']) || 'replynextai-connection' !== sanitize_key(wp_unslash($_GET['page']))) return;
+        wp_safe_redirect(admin_url('admin.php?page=replynextai-ai'));
+        exit;
     }
-
     public function handle_test_connection() {
         if (!current_user_can('manage_options')) wp_die(esc_html__('Unauthorized', 'replynext-ai-chat-assistant-for-woocommerce'));
         check_admin_referer('replynextai_test_connection');
@@ -663,8 +787,7 @@ final class ReplyNextAI_Plugin {
             $this->last_widget_provision_error = 'authorization';
         }
         $notice = $success ? 'success' : ('company_save' === $this->last_widget_provision_error ? 'company_save_error' : ('revoked' === $this->last_widget_provision_error ? 'widget_revoked' : ($status ? 'widget_error' : 'error')));
-        $return_page = isset($_POST['return_page']) ? sanitize_key(wp_unslash($_POST['return_page'])) : 'replynextai-connection';
-        if (!in_array($return_page, array('replynextai-ai', 'replynextai-connection'), true)) $return_page = 'replynextai-connection';
+        $return_page = 'replynextai-ai';
         wp_safe_redirect(admin_url('admin.php?page=' . $return_page . '&rn_notice=' . $notice));
         exit;
     }
@@ -720,19 +843,23 @@ final class ReplyNextAI_Plugin {
         $busy = $available && in_array($status['phase'], array('queued', 'running'), true);
         $payment_links = get_option(self::CHAT_PAYMENT_LINKS_OPTION, '0');
         $payment_links_with_cod = get_option(self::CHAT_PAYMENT_LINKS_WITH_COD_OPTION, '0');
-        ?><div class="wrap rn-wrap">
-            <?php $this->page_header(__('WooCommerce', 'replynext-ai-chat-assistant-for-woocommerce'), __('Manage product discovery and chat checkout for your store.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
-            <div class="rn-grid rn-grid-form">
-                <div class="rn-card" data-rn-catalog-sync data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>" data-phase="<?php echo esc_attr($status['phase']); ?>" data-marker="<?php echo esc_attr($status['marker']); ?>" data-starting="<?php esc_attr_e('Starting product sync…', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-unreachable="<?php esc_attr_e('Could not check sync progress. The job may still be running. Try checking again.', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-waiting="<?php esc_attr_e('The sync is taking longer than expected. Check back for its result.', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-expired="<?php esc_attr_e('Your WordPress session expired. Reload this page before trying again.', 'replynext-ai-chat-assistant-for-woocommerce'); ?>">
-                    <span class="rn-status <?php echo $available ? 'is-live' : 'is-off'; ?>"><?php echo $available ? esc_html__('Detected', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Unavailable', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span>
-                    <h2><?php esc_html_e('Product catalog sync', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
-                    <p><?php esc_html_e('Syncs published WooCommerce products in batches of up to 100, including prices, descriptions, categories, links, and images.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
-                    <p class="rn-catalog-progress" role="status" aria-live="polite" aria-atomic="true"><span class="rn-catalog-spinner" data-rn-sync-spinner aria-hidden="true" <?php echo $busy ? '' : 'hidden'; ?>></span><strong data-rn-sync-message><?php echo esc_html($status['message']); ?></strong></p>
+        ?><div class="wrap rn-wrap rn-commerce-page">
+            <?php $this->page_header('', '', 'commerce'); ?>
+            <div class="rn-commerce-stack">
+                <div data-rn-catalog-sync data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>" data-phase="<?php echo esc_attr($status['phase']); ?>" data-marker="<?php echo esc_attr($status['marker']); ?>" data-starting="<?php esc_attr_e('Starting product sync…', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-unreachable="<?php esc_attr_e('Could not reach WordPress. Reload this page, then click Sync Catalog Now to resume.', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-waiting="<?php esc_attr_e('No recent sync progress. Click Sync Catalog Now to resume from the saved batch.', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-expired="<?php esc_attr_e('Your WordPress session expired. Reload this page before trying again.', 'replynext-ai-chat-assistant-for-woocommerce'); ?>">
+                    <header class="rn-ai-heading rn-commerce-heading">
+                        <div><span class="rn-ai-module"><?php esc_html_e('WooCommerce Commerce Module', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span><h1><?php esc_html_e('Catalog Sync & Live Verification', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h1><p><?php esc_html_e('Sync published products in small batches. Manual sync does not need WP-Cron.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p></div>
                     <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                         <input type="hidden" name="action" value="replynextai_sync_products" />
                         <?php wp_nonce_field('replynextai_sync_products'); ?>
-                        <button type="submit" class="button button-primary" data-rn-sync-submit data-busy-label="<?php esc_attr_e('Syncing products…', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-idle-label="<?php esc_attr_e('Sync Products Now', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-available="<?php echo $available ? '1' : '0'; ?>" <?php disabled(!$available); ?>><?php esc_html_e('Sync Products Now', 'replynext-ai-chat-assistant-for-woocommerce'); ?></button>
+                        <button type="submit" class="button button-primary" data-rn-sync-submit data-busy-label="<?php esc_attr_e('Syncing products…', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-idle-label="<?php esc_attr_e('Sync Catalog Now', 'replynext-ai-chat-assistant-for-woocommerce'); ?>" data-available="<?php echo $available ? '1' : '0'; ?>" <?php disabled(!$available); ?>><?php esc_html_e('Sync Catalog Now', 'replynext-ai-chat-assistant-for-woocommerce'); ?></button>
                     </form>
+                    </header>
+                    <section class="rn-card rn-commerce-status">
+                        <div class="rn-commerce-status-top"><span class="rn-dash-icon rn-tone-blue dashicons dashicons-products" aria-hidden="true"></span><h2><?php esc_html_e('Synchronization Status', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2><span class="rn-status <?php echo $available ? 'is-live' : 'is-off'; ?>"><?php echo $available ? esc_html__('WooCommerce detected', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Activate WooCommerce', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span></div>
+                        <p class="rn-catalog-progress" role="status" aria-live="polite" aria-atomic="true"><span class="rn-catalog-spinner" data-rn-sync-spinner aria-hidden="true" <?php echo $busy ? '' : 'hidden'; ?>></span><strong data-rn-sync-message><?php echo esc_html($status['message']); ?></strong></p>
+                        <div class="rn-commerce-progress-track" aria-hidden="true"><span></span></div>
+                    </section>
                 </div>
                 <div class="rn-card">
                     <h2><?php esc_html_e('Automatic updates', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
@@ -983,7 +1110,9 @@ final class ReplyNextAI_Plugin {
         }
         $state = $this->catalog_checkpoint();
         $binding = hash('sha256', wp_json_encode(array(home_url('/'), $o['server_url'], $o['api_token'])));
-        if (!is_array($state) || empty($state['sync_id']) || ($state['binding'] ?? '') !== $binding) $state = array('sync_id' => wp_generate_uuid4(), 'page' => 1, 'total_synced' => 0, 'binding' => $binding);
+        if (!is_array($state) || empty($state['sync_id']) || ($state['binding'] ?? '') !== $binding) $state = array('sync_id' => wp_generate_uuid4(), 'page' => 1, 'total_synced' => 0, 'binding' => $binding, 'batch_size' => 20);
+        // Existing checkpoints used 100 rows per page. Do not change their offset.
+        $batch_size = 20 === (int) ($state['batch_size'] ?? 100) ? 20 : 100;
         if ($restart) $state['attempts'] = 0;
         if (1 === (int) $state['page'] && empty($state['started'])) {
             delete_transient(self::CATALOG_DIRTY_TRANSIENT);
@@ -997,7 +1126,7 @@ final class ReplyNextAI_Plugin {
         if (!empty($state['finalizing'])) return $this->finish_catalog_sync($o, $state, $manual);
         $products = array();
         $index_products = array();
-        $batch = wc_get_products(array('status' => 'publish', 'limit' => 100, 'page' => $page, 'orderby' => 'ID', 'order' => 'ASC', 'paginate' => true, 'return' => 'objects'));
+        $batch = wc_get_products(array('status' => 'publish', 'limit' => $batch_size, 'page' => $page, 'orderby' => 'ID', 'order' => 'ASC', 'paginate' => true, 'return' => 'objects'));
         if (!is_object($batch) || !isset($batch->products) || !is_array($batch->products)) return $this->retry_catalog_batch($state, $manual);
         $batch_products = $batch->products;
         foreach ($batch_products as $product) {
@@ -1038,8 +1167,8 @@ final class ReplyNextAI_Plugin {
             if (($index['indexed'] ?? null) !== count($index_products)) return $this->retry_catalog_batch($state, $manual);
             $total_synced += $body['synced'];
         }
-        if (count($batch_products) === 100 || ($manual && $products)) {
-            update_option(self::CATALOG_CHECKPOINT_OPTION, array('sync_id' => $sync_id, 'page' => $page + 1, 'total_synced' => $total_synced, 'started' => true, 'binding' => $binding, 'finalizing' => count($batch_products) < 100), false);
+        if (count($batch_products) === $batch_size || ($manual && $products)) {
+            update_option(self::CATALOG_CHECKPOINT_OPTION, array('sync_id' => $sync_id, 'page' => $page + 1, 'total_synced' => $total_synced, 'started' => true, 'binding' => $binding, 'batch_size' => $batch_size, 'finalizing' => count($batch_products) < $batch_size), false);
             if (!$manual && !$this->queue_catalog_sync(5)) {
                 $this->record_catalog_progress('failed', __('The next product batch could not be scheduled. Try again to continue.', 'replynext-ai-chat-assistant-for-woocommerce'));
                 return false;
@@ -1067,52 +1196,6 @@ final class ReplyNextAI_Plugin {
         return true;
     }
 
-    public function help_page() {
-        $o = $this->options();
-        $status = $this->remote_status(false);
-        $widget_id = sanitize_text_field((string) get_option('replynextai_widget_id', ''));
-        $ai_configured = !empty($o['api_token']) && !empty($widget_id);
-        $company_name = is_array($status) && !empty($status['company']['name']) ? sanitize_text_field($status['company']['name']) : '';
-        $ai_connection_message = $company_name ? sprintf(__('Connected to %s. This shortcode uses this site’s secure widget connection automatically.', 'replynext-ai-chat-assistant-for-woocommerce'), $company_name) : __('A secure widget connection is saved for this WordPress site.', 'replynext-ai-chat-assistant-for-woocommerce');
-        $contact_configured = ('1' === $o['whatsapp_enabled'] && !empty($o['whatsapp_number'])) || ('1' === $o['messenger_enabled'] && !empty($o['messenger_url'])) || ('1' === $o['call_enabled'] && !empty($o['call_number']));
-        ?>
-        <div class="wrap rn-wrap">
-            <?php $this->page_header(__('Help & Shortcodes', 'replynext-ai-chat-assistant-for-woocommerce'), __('Use automatic display, shortcodes, or both.', 'replynext-ai-chat-assistant-for-woocommerce')); ?>
-            <div class="rn-grid rn-grid-2">
-                <div class="rn-card">
-                    <span class="rn-status <?php echo $ai_configured ? 'is-live' : 'is-off'; ?>"><?php echo $ai_configured ? esc_html__('Connected', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Demo', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span>
-                    <h2><?php esc_html_e('AI Website Chat', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
-                    <?php if ($ai_configured) : ?>
-                        <p><?php echo esc_html($ai_connection_message); ?></p>
-                        <p><code>[replynextai_chat]</code></p>
-                        <p class="description"><?php esc_html_e('No Company ID, widget ID, or token is needed in the shortcode.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
-                    <?php else : ?>
-                        <p><?php esc_html_e('Demo example — save your ReplyNext server URL and WordPress connection token, then test the connection before using chat.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
-                        <p><code>[replynextai_chat]</code></p>
-                    <?php endif; ?>
-                </div>
-
-                <div class="rn-card">
-                    <span class="rn-status <?php echo $contact_configured ? 'is-live' : 'is-off'; ?>"><?php echo $contact_configured ? esc_html__('Configured', 'replynext-ai-chat-assistant-for-woocommerce') : esc_html__('Demo', 'replynext-ai-chat-assistant-for-woocommerce'); ?></span>
-                    <h2><?php esc_html_e('Contact Channels', 'replynext-ai-chat-assistant-for-woocommerce'); ?></h2>
-                    <?php if ($contact_configured) : ?>
-                        <p><?php esc_html_e('This shortcode uses your saved Contact Channels settings.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
-                        <p><code>[replynextai_whatsapp]</code></p>
-                        <ul>
-                            <?php if ('1' === $o['whatsapp_enabled'] && $o['whatsapp_number']) : ?><li><?php echo esc_html(sprintf(__('WhatsApp: %s', 'replynext-ai-chat-assistant-for-woocommerce'), $o['whatsapp_number'])); ?></li><?php endif; ?>
-                            <?php if ('1' === $o['messenger_enabled'] && $o['messenger_url']) : ?><li><?php echo esc_html(sprintf(__('Messenger: %s', 'replynext-ai-chat-assistant-for-woocommerce'), $o['messenger_url'])); ?></li><?php endif; ?>
-                            <?php if ('1' === $o['call_enabled'] && $o['call_number']) : ?><li><?php echo esc_html(sprintf(__('Phone: %s', 'replynext-ai-chat-assistant-for-woocommerce'), $o['call_number'])); ?></li><?php endif; ?>
-                        </ul>
-                    <?php else : ?>
-                        <p><?php esc_html_e('Demo example — configure a channel first, then the shortcode uses your saved settings.', 'replynext-ai-chat-assistant-for-woocommerce'); ?></p>
-                        <p><code>[replynextai_whatsapp number="8801XXXXXXXXX" message="Hello!"]</code></p>
-                    <?php endif; ?>
-                </div>
-            </div>
-        </div>
-        <?php
-    }
-
     private function field($key, $label, $value, $placeholder = '', $type = 'text') {
         printf('<label class="rn-field"><span>%s</span><input type="%s" name="%s[%s]" value="%s" placeholder="%s" /></label>', esc_html($label), esc_attr($type), esc_attr(self::OPTION_KEY), esc_attr($key), esc_attr($value), esc_attr($placeholder));
     }
@@ -1121,8 +1204,8 @@ final class ReplyNextAI_Plugin {
         if (is_admin() || !$this->display_allowed()) return;
         $o = $this->options();
         if ('1' === $o['contact_enabled'] && (('1' === $o['whatsapp_enabled'] && $o['whatsapp_number']) || ('1' === $o['messenger_enabled'] && $o['messenger_url']) || ('1' === $o['call_enabled'] && $o['call_number']))) {
-            wp_enqueue_style('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.css', array(), REPLYNEXTAI_VERSION);
-            wp_enqueue_script('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.js', array(), REPLYNEXTAI_VERSION, true);
+            wp_enqueue_style('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.css', array(), REPLYNEXTAI_VERSION . '.viewport1');
+            wp_enqueue_script('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.js', array(), REPLYNEXTAI_VERSION . '.viewport1', true);
         }
         if ('1' === $o['ai_enabled'] && '1' === $o['ai_sitewide']) $this->enqueue_ai($o);
     }
@@ -1149,8 +1232,8 @@ final class ReplyNextAI_Plugin {
         $o = $this->options();
         $a = shortcode_atts(array('number' => $o['whatsapp_number'], 'message' => $o['whatsapp_message'], 'label' => $o['whatsapp_label']), $attributes, 'replynextai_whatsapp');
         $config = array_merge($o, array('whatsapp_enabled' => '1', 'whatsapp_number' => preg_replace('/[^0-9]/', '', (string) $a['number']), 'whatsapp_message' => sanitize_text_field($a['message']), 'whatsapp_label' => sanitize_text_field($a['label'])));
-        wp_enqueue_style('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.css', array(), REPLYNEXTAI_VERSION);
-        wp_enqueue_script('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.js', array(), REPLYNEXTAI_VERSION, true);
+        wp_enqueue_style('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.css', array(), REPLYNEXTAI_VERSION . '.viewport1');
+        wp_enqueue_script('replynextai-frontend', REPLYNEXTAI_URL . 'assets/frontend.js', array(), REPLYNEXTAI_VERSION . '.viewport1', true);
         return $this->whatsapp_markup($config);
     }
 

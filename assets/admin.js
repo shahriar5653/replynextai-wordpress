@@ -55,6 +55,7 @@
           var result = await request(marker && !recoveringStart ? 'replynextai_sync_products_step' : 'replynextai_sync_products_status', marker);
           if (recoveringStart && result.marker === marker) throw new Error('Start not yet confirmed');
           recoveringStart = false;
+          if (result.marker && result.marker !== marker) startedAt = Date.now();
           marker = result.marker || marker;
           failures = 0;
           render(result.phase, result.message);
@@ -94,6 +95,55 @@
 
   document.addEventListener('DOMContentLoaded', function () {
     initCatalogSync();
+    var rules = document.querySelector('[data-rn-display-rules]');
+    if (rules) {
+      var mode = rules.querySelector('[data-rn-display-mode]');
+      var filter = rules.querySelector('[data-rn-display-filter]');
+      var count = rules.querySelector('[data-rn-display-count]');
+      var include = rules.querySelector('[data-rn-display-include]');
+      var exclude = rules.querySelector('[data-rn-display-exclude]');
+      var rows = Array.from(rules.querySelectorAll('[data-rn-display-row]'));
+      var currentMode = mode.value;
+      function updateRows() {
+        var query = filter.value.trim().toLowerCase();
+        rows.forEach(function (row) { row.hidden = !row.textContent.toLowerCase().includes(query); });
+        count.textContent = rows.filter(function (row) { return !row.hidden; }).length + ' / ' + rows.length;
+      }
+      function remember() {
+        rows.forEach(function (row) {
+          var input = row.querySelector('[data-rn-display-page]');
+          if (currentMode === 'all') {
+            input.dataset.all = input.checked ? '1' : '0';
+            if (!input.checked) input.dataset.selected = '0';
+          } else {
+            input.dataset.selected = input.checked ? '1' : '0';
+            if (input.checked) input.dataset.all = '1';
+          }
+        });
+      }
+      mode.addEventListener('change', function () {
+        remember();
+        currentMode = mode.value;
+        rows.forEach(function (row) {
+          var input = row.querySelector('[data-rn-display-page]');
+          input.checked = input.dataset[currentMode === 'all' ? 'all' : 'selected'] === '1';
+        });
+      });
+      filter.addEventListener('input', updateRows);
+      rules.closest('form').addEventListener('submit', function () {
+        remember();
+        var included = include.dataset.preserve.split(',').filter(Boolean);
+        var excluded = exclude.dataset.preserve.split(',').filter(Boolean);
+        rows.forEach(function (row) {
+          var input = row.querySelector('[data-rn-display-page]');
+          if (input.dataset.selected === '1') included.push(input.value);
+          if (input.dataset.all === '0') excluded.push(input.value);
+        });
+        include.value = included.join(',');
+        exclude.value = excluded.join(',');
+      });
+      updateRows();
+    }
     var wrap = document.querySelector('.rn-wrap');
     var header = wrap ? wrap.querySelector('.rn-admin-header') : null;
 

@@ -26,6 +26,11 @@ final class ReplyNextAI_Checkout {
         }
         $expected = hash_hmac('sha256', $timestamp . '.' . $operation . '.' . hash('sha256', $raw), hash('sha256', $options['api_token']));
         if (!hash_equals($expected, $signature)) return self::response(array('success' => false, 'error' => 'Unauthorized checkout request'), 401);
+        // Translate the shopper's district/state name only after verifying the
+        // signed request. WooCommerce stores the canonical code, not its label.
+        if (isset($payload['customer']) && is_array($payload['customer'])) {
+            $payload['customer'] = self::normalize_customer_state($payload['customer']);
+        }
         $fields_by_operation = array(
             'checkout-create' => array('lines', 'customer', 'expectedQuote', 'idempotencyKey', 'confirmed'),
             'checkout-quote' => array('lines', 'customer', 'shippingRateId', 'paymentMethod'),
@@ -268,6 +273,30 @@ final class ReplyNextAI_Checkout {
         if (is_array($states) && count($states) && (!isset($customer['billing_state']) || !isset($states[$customer['billing_state']]))) return false;
         if (!empty($customer['billing_postcode']) && !WC_Validation::is_postcode($customer['billing_postcode'], $country)) return false;
         return true;
+    }
+
+    private static function normalize_customer_state($customer) {
+        if (!isset($customer['billing_country'], $customer['billing_state']) || !is_string($customer['billing_country']) || !is_string($customer['billing_state']) || !function_exists('WC')) return $customer;
+        $countries = WC()->countries;
+        if (!$countries || !is_callable(array($countries, 'get_states'))) return $customer;
+        $states = $countries->get_states($customer['billing_country']);
+        if (!is_array($states) || !$states) return $customer;
+        $input = trim($customer['billing_state']);
+        if (isset($states[$input])) return $customer;
+        $fold = static function ($value) {
+            $value = trim((string) $value);
+            if (function_exists('remove_accents')) $value = remove_accents($value);
+            return function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
+        };
+        $needle = $fold($input);
+        $matches = array();
+        foreach ($states as $code => $label) {
+            if ($needle === $fold($code) || $needle === $fold($label)) $matches[] = $code;
+        }
+        // Never guess when translated labels collide. Normal validation will
+        // reject the unresolved value and keep the order unsubmitted.
+        if (1 === count($matches)) $customer['billing_state'] = (string) $matches[0];
+        return $customer;
     }
 
     private static function products($requested) {
